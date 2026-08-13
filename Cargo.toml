@@ -1,0 +1,21 @@
+[package]
+name = "rc_03_maze_movement"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nalgebra-glm = "0.18.0"
+minifb = "0.26.0"
+
+# El raycaster lanza 1300 rayos por cuadro y sin optimizar no alcanza los 60
+# fps. Se optimiza también el perfil de desarrollo para que `cargo run` sea
+# jugable sin tener que acordarse del `--release`; se conserva la información
+# de depuración y los chequeos de desbordamiento.
+[profile.dev]
+opt-level = 2
+
+# Las dependencias no se depuran, así que van con optimización completa.
+[profile.dev.package."*"]
+opt-level = 3
