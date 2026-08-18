@@ -8,6 +8,12 @@ use crate::player::Player;
 
 pub type Maze = Vec<Vec<char>>;
 
+/// Lado en píxeles de una celda del laberinto.
+///
+/// Es la escala del mundo: define tanto el tamaño de la celda en la vista
+/// cenital como la altura de la pared que se proyecta en la vista 3D.
+pub const BLOCK_SIZE: usize = 100;
+
 pub fn load_maze(filename: &str, block_size: usize) -> (Maze, Player) {
     let file = File::open(filename).expect("no se pudo abrir el archivo del laberinto");
 
