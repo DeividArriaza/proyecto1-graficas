@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 nalgebra-glm = "0.18.0"
 minifb = "0.26.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # El raycaster lanza 1300 rayos por cuadro y sin optimizar no alcanza los 60
 # fps. Se optimiza también el perfil de desarrollo para que `cargo run` sea

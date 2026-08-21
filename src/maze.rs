@@ -14,7 +14,7 @@ pub type Maze = Vec<Vec<char>>;
 /// cenital como la altura de la pared que se proyecta en la vista 3D.
 pub const BLOCK_SIZE: usize = 100;
 
-pub fn load_maze(filename: &str, block_size: usize) -> (Maze, Player) {
+pub fn load_maze(filename: &str) -> (Maze, Player) {
     let file = File::open(filename).expect("no se pudo abrir el archivo del laberinto");
 
     let reader = BufReader::new(file);
@@ -30,8 +30,8 @@ pub fn load_maze(filename: &str, block_size: usize) -> (Maze, Player) {
 
         for (col, character) in line.chars().enumerate() {
             if character == 'p' {
-                let x = col * block_size + block_size / 2;
-                let y = row * block_size + block_size / 2;
+                let x = col * BLOCK_SIZE + BLOCK_SIZE / 2;
+                let y = row * BLOCK_SIZE + BLOCK_SIZE / 2;
                 player_pos = Some(Vec2::new(x as f32, y as f32));
 
                 cells.push(' ');

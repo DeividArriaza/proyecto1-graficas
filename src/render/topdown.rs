@@ -5,6 +5,7 @@
 //! vista en primera persona.
 
 use crate::caster::cast_ray;
+use crate::discovery::Discovered;
 use crate::framebuffer::Framebuffer;
 use crate::maze::{Maze, BLOCK_SIZE};
 use crate::player::Player;
@@ -27,9 +28,20 @@ fn draw_cell(framebuffer: &mut Framebuffer, xo: usize, yo: usize, cell: char) {
     }
 }
 
-pub fn render(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
+pub fn render(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    player: &Player,
+    discovered: &Discovered,
+) {
     for (row, line) in maze.iter().enumerate() {
         for (col, &cell) in line.iter().enumerate() {
+            // niebla de guerra: lo que todavía no se ha visto se deja en el
+            // color de fondo, indistinguible de un pasillo sin explorar.
+            if !discovered.is_known(col, row) {
+                continue;
+            }
+
             draw_cell(framebuffer, col * BLOCK_SIZE, row * BLOCK_SIZE, cell);
         }
     }
@@ -52,6 +64,6 @@ pub fn render(framebuffer: &mut Framebuffer, maze: &Maze, player: &Player) {
     for i in 0..NUM_RAYS {
         let ray_fraction = i as f32 / (NUM_RAYS - 1) as f32; // de 0.0 a 1.0
         let angle = player.a - FOV / 2.0 + FOV * ray_fraction;
-        cast_ray(framebuffer, maze, player, angle, BLOCK_SIZE, true);
+        cast_ray(framebuffer, maze, player, angle, true);
     }
 }

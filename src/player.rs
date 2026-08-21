@@ -2,7 +2,7 @@ use minifb::{Key, Window};
 use nalgebra_glm::Vec2;
 use std::f32::consts::{PI, TAU};
 
-use crate::maze::Maze;
+use crate::maze::{Maze, BLOCK_SIZE};
 
 // ---------------------------------------------------------------------------
 // Velocidades del jugador. Ambas se aplican una vez por cuadro, así que su
@@ -38,14 +38,14 @@ pub struct Player {
 /// La meta `g` es transitable a propósito: `cast_ray` sí la trata como pared
 /// (por eso se ve como un muro verde al frente), pero el jugador tiene que
 /// poder entrar en ella para que se dispare la condición de victoria.
-fn is_wall(maze: &Maze, block_size: usize, x: f32, y: f32) -> bool {
+fn is_wall(maze: &Maze, x: f32, y: f32) -> bool {
     // fuera del laberinto por el lado negativo: se trata como pared.
     if x < 0.0 || y < 0.0 {
         return true;
     }
 
-    let i = x as usize / block_size;
-    let j = y as usize / block_size;
+    let i = x as usize / BLOCK_SIZE;
+    let j = y as usize / BLOCK_SIZE;
 
     match maze.get(j).and_then(|row| row.get(i)) {
         Some(&cell) => cell != ' ' && cell != 'g' && cell != 'G',
@@ -63,23 +63,23 @@ fn is_wall(maze: &Maze, block_size: usize, x: f32, y: f32) -> bool {
 /// El punto que se consulta no es el destino exacto sino el destino corrido
 /// `COLLISION_MARGIN` píxeles en la dirección del movimiento, de modo que el
 /// jugador se detenga *antes* de tocar la pared y nunca quede dentro de ella.
-fn try_move(player: &mut Player, maze: &Maze, block_size: usize, dx: f32, dy: f32) {
+fn try_move(player: &mut Player, maze: &Maze, dx: f32, dy: f32) {
     if dx != 0.0 {
         let probe_x = player.pos.x + dx + COLLISION_MARGIN * dx.signum();
-        if !is_wall(maze, block_size, probe_x, player.pos.y) {
+        if !is_wall(maze, probe_x, player.pos.y) {
             player.pos.x += dx;
         }
     }
 
     if dy != 0.0 {
         let probe_y = player.pos.y + dy + COLLISION_MARGIN * dy.signum();
-        if !is_wall(maze, block_size, player.pos.x, probe_y) {
+        if !is_wall(maze, player.pos.x, probe_y) {
             player.pos.y += dy;
         }
     }
 }
 
-pub fn process_events(window: &Window, player: &mut Player, maze: &Maze, block_size: usize) {
+pub fn process_events(window: &Window, player: &mut Player, maze: &Maze) {
     // A y D solo cambian el ángulo de vista: el jugador gira sobre su eje, así
     // que girar nunca puede meterlo dentro de una pared.
     if window.is_key_down(Key::A) {
@@ -104,7 +104,6 @@ pub fn process_events(window: &Window, player: &mut Player, maze: &Maze, block_s
         try_move(
             player,
             maze,
-            block_size,
             MOVE_SPEED * cos_a,
             MOVE_SPEED * sin_a,
         );
@@ -114,7 +113,6 @@ pub fn process_events(window: &Window, player: &mut Player, maze: &Maze, block_s
         try_move(
             player,
             maze,
-            block_size,
             -MOVE_SPEED * cos_a,
             -MOVE_SPEED * sin_a,
         );

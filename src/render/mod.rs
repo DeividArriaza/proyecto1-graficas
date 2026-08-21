@@ -3,8 +3,15 @@
 //! `main.rs` no dibuja: sólo decide qué vista corresponde y llama a uno de los
 //! submódulos de aquí. Cada submódulo es una vista completa.
 
-pub mod topdown;
+pub mod hud;
+pub mod lighting;
+pub mod minimap;
+pub mod text;
 pub mod world;
+
+// `topdown.rs` sigue en el disco pero ya no forma parte del programa: era la
+// vista cenital a escala 1:1 que servía de depuración antes del minimapa. Se
+// deja como referencia; para revivirla basta con declararla aquí de nuevo.
 
 use std::f32::consts::PI;
 
@@ -12,7 +19,7 @@ use std::f32::consts::PI;
 ///
 /// Vive aquí porque las dos vistas lo comparten: la 3D lo usa para repartir un
 /// rayo por columna de pantalla, y la cenital para dibujar el abanico.
-pub const FOV: f32 = PI / 2;
+pub const FOV: f32 = PI / 2.0;
 
 /// Color con el que se pinta cada tipo de celda del laberinto.
 pub fn cell_color(cell: char) -> u32 {
@@ -23,19 +30,4 @@ pub fn cell_color(cell: char) -> u32 {
         'g' | 'G' => 0x00FF00, // meta
         _ => 0xFFDDDD,         // cualquier otra cosa
     }
-}
-
-/// Oscurece un color según la distancia, para dar sensación de profundidad.
-/// El factor va de 1.0 (pegado al jugador) hacia 0.0 (lejano).
-///
-/// Sin uso por ahora: se desactivó el sombreado en `world::render`.
-#[allow(dead_code)]
-pub fn shade(color: u32, distance: f32) -> u32 {
-    let factor = (1.0 - distance / 900.0).clamp(0.25, 1.0);
-
-    let r = ((color >> 16) & 0xFF) as f32 * factor;
-    let g = ((color >> 8) & 0xFF) as f32 * factor;
-    let b = (color & 0xFF) as f32 * factor;
-
-    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
 }
