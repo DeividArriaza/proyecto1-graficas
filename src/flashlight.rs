@@ -11,7 +11,7 @@ const SECONDS_OF_USE: f32 = 35.0;
 /// Más lento que el gasto a propósito: apagarla tiene que ser una decisión, no
 /// un trámite. Pero existe para que agotar la batería nunca deje al jugador
 /// ciego de forma permanente, sin manera de terminar el nivel.
-const SECONDS_TO_RECHARGE: f32 = 90.0;
+const SECONDS_TO_RECHARGE: f32 = 20.0;
 
 /// Nivel de batería bajo el cual la luz empieza a apagarse gradualmente.
 ///

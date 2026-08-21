@@ -7,6 +7,16 @@ use std::time::Instant;
 /// demasiado para poder leerlo.
 const SMOOTHING: f32 = 0.1;
 
+/// Duración máxima que se le reporta a un cuadro, en segundos.
+///
+/// Un cuadro puede durar muchísimo si la ventana se arrastra, si el sistema
+/// suspende el proceso o si se abre otra aplicación encima. Sin este tope, al
+/// volver se aplicaría todo ese tiempo de golpe: el jugador aparecería metros
+/// más adelante —posiblemente del otro lado de una pared— y la batería se
+/// vaciaría de un salto. Acotarlo pierde un poco de tiempo real, que es
+/// exactamente lo que se quiere.
+const MAX_DELTA: f32 = 0.1;
+
 pub struct FpsCounter {
     /// Momento en que empezó el cuadro anterior.
     last_frame: Option<Instant>,
@@ -36,7 +46,7 @@ impl FpsCounter {
 
         if let Some(last) = self.last_frame {
             let dt = now.duration_since(last).as_secs_f32();
-            self.delta = dt;
+            self.delta = dt.min(MAX_DELTA);
 
             // un cuadro de duración cero daría división por cero; se descarta.
             if dt > 0.0 {

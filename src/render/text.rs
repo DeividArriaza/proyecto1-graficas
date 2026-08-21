@@ -155,9 +155,6 @@ pub fn draw_text(
 }
 
 /// Dibuja `text` centrado horizontalmente en el framebuffer, a la altura `y`.
-///
-/// Sin uso todavía: lo van a usar las pantallas de bienvenida y de victoria.
-#[allow(dead_code)]
 pub fn draw_text_centered(
     framebuffer: &mut Framebuffer,
     y: usize,

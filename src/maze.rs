@@ -14,40 +14,77 @@ pub type Maze = Vec<Vec<char>>;
 /// cenital como la altura de la pared que se proyecta en la vista 3D.
 pub const BLOCK_SIZE: usize = 100;
 
-pub fn load_maze(filename: &str) -> (Maze, Player) {
-    let file = File::open(filename).expect("no se pudo abrir el archivo del laberinto");
+/// Ángulo de vista inicial del jugador, en radianes.
+const INITIAL_ANGLE: f32 = PI / 3.0;
 
+/// Carga un laberinto de un archivo de texto.
+///
+/// Devuelve `None` si el archivo no se puede abrir o leer, en vez de entrar en
+/// pánico: quien llama decide qué hacer, y en este proyecto la respuesta es
+/// generar uno procedural en su lugar.
+pub fn load_maze(filename: &str) -> Option<Maze> {
+    let file = File::open(filename).ok()?;
     let reader = BufReader::new(file);
 
     let mut maze: Maze = Vec::new();
 
-    let mut player_pos: Option<Vec2> = None;
-
-    for (row, line) in reader.lines().enumerate() {
-        let line = line.expect("no se pudo leer una línea del laberinto");
-
-        let mut cells: Vec<char> = Vec::new();
-
-        for (col, character) in line.chars().enumerate() {
-            if character == 'p' {
-                let x = col * BLOCK_SIZE + BLOCK_SIZE / 2;
-                let y = row * BLOCK_SIZE + BLOCK_SIZE / 2;
-                player_pos = Some(Vec2::new(x as f32, y as f32));
-
-                cells.push(' ');
-            } else {
-                cells.push(character);
-            }
-        }
-
-        maze.push(cells);
+    for line in reader.lines() {
+        maze.push(line.ok()?.chars().collect());
     }
 
-    let player = Player {
-        pos: player_pos.unwrap_or_else(|| Vec2::new(0.0, 0.0)),
-        // ángulo de vista inicial; el jugador podrá girarlo con el teclado.
-        a: PI / 3.0,
-    };
+    if maze.is_empty() {
+        return None;
+    }
 
-    (maze, player)
+    Some(maze)
+}
+
+/// Saca al jugador del laberinto y devuelve su estado inicial.
+///
+/// La marca `p` se reemplaza por piso: ya cumplió su función y dejarla haría que
+/// el caster la tratara como pared.
+///
+/// Si no hay marca `p`, el jugador arranca en el centro de la primera celda
+/// libre que se encuentre. Antes se usaba (0, 0), que en un laberinto con borde
+/// cerrado es justo la esquina de una pared.
+pub fn extract_player(maze: &mut Maze) -> Player {
+    let mut position: Option<Vec2> = None;
+
+    for (row, line) in maze.iter_mut().enumerate() {
+        for (col, character) in line.iter_mut().enumerate() {
+            if *character == 'p' || *character == 'P' {
+                *character = ' ';
+                position = Some(cell_center(col, row));
+            }
+        }
+    }
+
+    let pos = position
+        .or_else(|| first_free_cell(maze))
+        .unwrap_or_else(|| cell_center(0, 0));
+
+    Player {
+        pos,
+        a: INITIAL_ANGLE,
+    }
+}
+
+/// Centro en píxeles de la celda (col, row).
+fn cell_center(col: usize, row: usize) -> Vec2 {
+    Vec2::new(
+        (col * BLOCK_SIZE + BLOCK_SIZE / 2) as f32,
+        (row * BLOCK_SIZE + BLOCK_SIZE / 2) as f32,
+    )
+}
+
+fn first_free_cell(maze: &Maze) -> Option<Vec2> {
+    for (row, line) in maze.iter().enumerate() {
+        for (col, &cell) in line.iter().enumerate() {
+            if cell == ' ' {
+                return Some(cell_center(col, row));
+            }
+        }
+    }
+
+    None
 }

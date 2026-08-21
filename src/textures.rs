@@ -15,10 +15,15 @@
 //! es desperdicio: a las alturas de estaca de este juego el detalle extra no se
 //! alcanza a ver y encarece cada muestreo.
 
-use crate::render::cell_color;
-
 /// Lado de las texturas generadas en código.
 const GENERATED_SIZE: usize = 64;
+
+/// Color para las celdas cuyo carácter no tiene textura asignada.
+///
+/// Magenta a propósito: es el color universal de "aquí falta una textura". Si
+/// aparece en pantalla, hay un carácter en el laberinto que nadie mapeó, y se
+/// nota de inmediato en vez de pasar por una pared cualquiera.
+const MISSING_TEXTURE: u32 = 0xFF00FF;
 
 pub struct Texture {
     pub width: usize,
@@ -119,7 +124,7 @@ impl TextureSet {
             steel: Texture::load_or_generate("assets/steel.png", Kind::SteelPanel),
             hazard: Texture::load_or_generate("assets/hazard.png", Kind::Hazard),
             terminal: Texture::load_or_generate("assets/terminal.png", Kind::Terminal),
-            fallback: flat(cell_color('?')),
+            fallback: flat(MISSING_TEXTURE),
         }
     }
 

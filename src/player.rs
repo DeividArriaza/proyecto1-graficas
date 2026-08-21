@@ -1,23 +1,50 @@
-use minifb::{Key, Window};
+use minifb::{Key, MouseMode, Window};
 use nalgebra_glm::Vec2;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 use crate::maze::{Maze, BLOCK_SIZE};
 
 // ---------------------------------------------------------------------------
-// Velocidades del jugador. Ambas se aplican una vez por cuadro, así que su
-// efecto real depende del frame rate (~60 cuadros por segundo con el
-// `frame_delay` de 16 ms que usa el ciclo de render).
+// Velocidades del jugador, en unidades **por segundo**.
+//
+// Antes eran por cuadro, lo que ataba la velocidad a los fps: la misma tecla
+// movía el doble de lejos en una máquina que corría al doble de rápido. A 60 fps
+// coincidían, pero la rúbrica sólo exige 15, y a 15 fps el jugador se habría
+// arrastrado a un cuarto de velocidad. Ahora todo se multiplica por el tiempo
+// del cuadro y el juego se siente igual sin importar el rendimiento.
 // ---------------------------------------------------------------------------
 
-/// Píxeles que avanza o retrocede el jugador por cuadro.
-/// A 60 fps: 5 px/cuadro = 300 px/s = 3 bloques por segundo.
-pub const MOVE_SPEED: f32 = 5.0;
+/// Píxeles por segundo caminando. Con bloques de 100 px, son 3 bloques por
+/// segundo.
+pub const WALK_SPEED: f32 = 300.0;
 
-/// Radianes que gira el jugador por cuadro.
-/// A 60 fps: PI/60 = 3°/cuadro = 180° por segundo.
-/// Subirlo hace el giro más brusco; bajarlo, más suave.
-pub const ROTATION_SPEED: f32 = PI / 60.0;
+/// Cuánto multiplica la velocidad el correr.
+///
+/// En 1.9 correr se siente claramente distinto de caminar sin volver el
+/// laberinto incontrolable en los pasillos de un bloque de ancho.
+pub const RUN_MULTIPLIER: f32 = 1.9;
+
+/// Radianes por segundo al girar con el teclado. PI = media vuelta por segundo.
+pub const ROTATION_SPEED: f32 = std::f32::consts::PI;
+
+/// Radianes de giro por píxel de movimiento del mouse.
+///
+/// A diferencia del teclado, esto **no** se multiplica por el tiempo del cuadro.
+/// El mouse ya entrega un desplazamiento acumulado: si un cuadro tardó el doble,
+/// el cursor recorrió el doble de píxeles y el giro sale correcto solo.
+/// Multiplicarlo por el delta aplicaría el tiempo dos veces y el giro se
+/// volvería más lento cuanto peor fuera el rendimiento.
+///
+/// En 0.004, cruzar la ventana de 1300 px de lado a lado gira unos 300 grados.
+pub const MOUSE_SENSITIVITY: f32 = 0.004;
+
+/// Salto de cursor, en píxeles, que se considera un artefacto y se descarta.
+///
+/// El cursor puede aparecer de golpe en otro punto al recuperar el foco de la
+/// ventana, al volver de otro escritorio o al reengancharse tras salirse de la
+/// pantalla. Sin este tope, ese salto se traduciría en un giro brusco de varias
+/// vueltas.
+const MAX_MOUSE_JUMP: f32 = 200.0;
 
 /// Radio del jugador en píxeles: qué tan cerca de una pared puede quedar.
 ///
@@ -25,6 +52,80 @@ pub const ROTATION_SPEED: f32 = PI / 60.0;
 /// crece hasta tapar toda la pantalla. Con 20 px sobre bloques de 100 px, la
 /// pared más cercana posible queda a 1/5 de bloque.
 pub const COLLISION_MARGIN: f32 = 20.0;
+
+/// Desplazamiento máximo que se evalúa de una sola vez, en píxeles.
+///
+/// El movimiento de un cuadro se parte en tramos de a lo sumo este tamaño. Sin
+/// eso, un cuadro muy largo —correr a 15 fps, o la ventana recién arrastrada—
+/// movería al jugador más de 100 px de golpe, y la comprobación de colisión sólo
+/// mira el punto de destino: atravesaría una pared completa sin tocarla nunca.
+const MAX_SUBSTEP: f32 = 20.0;
+
+/// Seguimiento del mouse para girar la cámara.
+///
+/// `minifb` no da movimiento relativo ni permite capturar el puntero, sólo la
+/// posición absoluta. Así que el desplazamiento se calcula guardando la posición
+/// del cuadro anterior y restando.
+///
+/// Limitación que eso impone: cuando el cursor llega al borde físico de la
+/// pantalla deja de moverse, y el giro se detiene hasta que lo traés de vuelta.
+/// No hay forma de evitarlo sin capturar el puntero, que `minifb` no expone. El
+/// teclado sigue girando sin límite, así que nunca quedás sin poder mirar.
+pub struct MouseLook {
+    /// Posición horizontal del cuadro anterior. `None` cuando no hay
+    /// referencia válida todavía.
+    last_x: Option<f32>,
+}
+
+impl MouseLook {
+    pub fn new() -> Self {
+        MouseLook { last_x: None }
+    }
+
+    /// Cuánto hay que girar, en radianes, por lo que se movió el mouse.
+    ///
+    /// Devuelve 0.0 en el primer cuadro: hace falta una posición anterior para
+    /// poder restar, y sin ella el giro saldría de la nada.
+    pub fn delta_angle(&mut self, window: &mut Window) -> f32 {
+        // Con la ventana sin foco el cursor está en otra aplicación. Se olvida
+        // la referencia para que al volver no se acumule el trayecto de afuera.
+        if !window.is_active() {
+            self.last_x = None;
+            return 0.0;
+        }
+
+        // `Pass` entrega la posición incluso fuera de la ventana, que es lo que
+        // se quiere: girar no debería cortarse porque el cursor se pasó del
+        // borde de la ventana por unos píxeles.
+        let Some((x, _)) = window.get_mouse_pos(MouseMode::Pass) else {
+            self.last_x = None;
+            return 0.0;
+        };
+
+        let previous = self.last_x.replace(x);
+
+        let Some(previous) = previous else {
+            return 0.0;
+        };
+
+        let movement = x - previous;
+
+        if movement.abs() > MAX_MOUSE_JUMP {
+            return 0.0;
+        }
+
+        movement * MOUSE_SENSITIVITY
+    }
+
+    /// Olvida la posición de referencia.
+    ///
+    /// Hay que llamarla al volver de la pausa: mientras el juego estaba detenido
+    /// el cursor pudo recorrer media pantalla, y sin esto todo ese trayecto se
+    /// aplicaría de golpe como un giro al reanudar.
+    pub fn reset(&mut self) {
+        self.last_x = None;
+    }
+}
 
 pub struct Player {
     /// Posición en píxeles dentro del laberinto.
@@ -36,8 +137,8 @@ pub struct Player {
 /// ¿La celda que contiene el punto (x, y) bloquea el paso?
 ///
 /// La meta `g` es transitable a propósito: `cast_ray` sí la trata como pared
-/// (por eso se ve como un muro verde al frente), pero el jugador tiene que
-/// poder entrar en ella para que se dispare la condición de victoria.
+/// (por eso se ve como un muro al frente), pero el jugador tiene que poder
+/// entrar en ella para que se dispare la condición de victoria.
 fn is_wall(maze: &Maze, x: f32, y: f32) -> bool {
     // fuera del laberinto por el lado negativo: se trata como pared.
     if x < 0.0 || y < 0.0 {
@@ -54,16 +155,34 @@ fn is_wall(maze: &Maze, x: f32, y: f32) -> bool {
     }
 }
 
-/// Aplica el desplazamiento (dx, dy) evaluando cada eje por separado.
+/// Aplica el desplazamiento (dx, dy) partiéndolo en tramos cortos.
+///
+/// Partirlo es lo que hace que la colisión aguante cualquier velocidad y
+/// cualquier ritmo de cuadros: cada tramo mide como máximo `MAX_SUBSTEP`, así
+/// que nunca hay un salto lo bastante grande para cruzar una pared entera.
+fn try_move(player: &mut Player, maze: &Maze, dx: f32, dy: f32) {
+    let distance = dx.abs().max(dy.abs());
+    let steps = (distance / MAX_SUBSTEP).ceil().max(1.0);
+    let count = steps as usize;
+
+    let step_x = dx / steps;
+    let step_y = dy / steps;
+
+    for _ in 0..count {
+        slide(player, maze, step_x, step_y);
+    }
+}
+
+/// Mueve un tramo, evaluando cada eje por separado.
 ///
 /// Evaluarlos por separado es lo que permite *deslizarse* a lo largo de una
-/// pared: si avanzas en diagonal contra un muro vertical, el eje X se bloquea
+/// pared: si avanzás en diagonal contra un muro vertical, el eje X se bloquea
 /// pero el eje Y sigue libre, en vez de frenar al jugador por completo.
 ///
 /// El punto que se consulta no es el destino exacto sino el destino corrido
 /// `COLLISION_MARGIN` píxeles en la dirección del movimiento, de modo que el
 /// jugador se detenga *antes* de tocar la pared y nunca quede dentro de ella.
-fn try_move(player: &mut Player, maze: &Maze, dx: f32, dy: f32) {
+fn slide(player: &mut Player, maze: &Maze, dx: f32, dy: f32) {
     if dx != 0.0 {
         let probe_x = player.pos.x + dx + COLLISION_MARGIN * dx.signum();
         if !is_wall(maze, probe_x, player.pos.y) {
@@ -79,16 +198,43 @@ fn try_move(player: &mut Player, maze: &Maze, dx: f32, dy: f32) {
     }
 }
 
-pub fn process_events(window: &Window, player: &mut Player, maze: &Maze) {
+/// ¿Se está corriendo?
+///
+/// Sirven Shift y Ctrl, de cualquiera de los dos lados. Ctrl no es un capricho:
+/// es el respaldo por si el juego termina corriendo sobre el backend de Wayland
+/// de `minifb`, donde Shift rompe la lectura de WASD —traduce las teclas con los
+/// modificadores aplicados, no encuentra los keysyms en mayúscula y descarta el
+/// evento, dejando la tecla pegada—. Por eso el `Cargo.toml` fuerza X11. Ctrl no
+/// cambia el nivel del teclado en ninguno de los dos backends, así que funciona
+/// siempre.
+pub fn is_running(window: &Window) -> bool {
+    window.is_key_down(Key::LeftShift)
+        || window.is_key_down(Key::RightShift)
+        || window.is_key_down(Key::LeftCtrl)
+        || window.is_key_down(Key::RightCtrl)
+}
+
+pub fn process_events(
+    window: &mut Window,
+    player: &mut Player,
+    maze: &Maze,
+    mouse: &mut MouseLook,
+    delta: f32,
+) {
     // A y D solo cambian el ángulo de vista: el jugador gira sobre su eje, así
     // que girar nunca puede meterlo dentro de una pared.
     if window.is_key_down(Key::A) {
-        player.a -= ROTATION_SPEED;
+        player.a -= ROTATION_SPEED * delta;
     }
 
     if window.is_key_down(Key::D) {
-        player.a += ROTATION_SPEED;
+        player.a += ROTATION_SPEED * delta;
     }
+
+    // El mouse gira sólo en horizontal, que es lo único que este raycaster puede
+    // representar: la cámara no tiene inclinación vertical, el horizonte está
+    // fijo a media pantalla.
+    player.a += mouse.delta_angle(window);
 
     // El ángulo se mantiene dentro de [0, 2PI) para que no crezca sin límite
     // tras muchos giros y pierda precisión en f32.
@@ -100,21 +246,17 @@ pub fn process_events(window: &Window, player: &mut Player, maze: &Maze) {
     //     y += velocidad * sin(a)
     let (sin_a, cos_a) = player.a.sin_cos();
 
+    let speed = if is_running(window) {
+        WALK_SPEED * RUN_MULTIPLIER
+    } else {
+        WALK_SPEED
+    } * delta;
+
     if window.is_key_down(Key::W) {
-        try_move(
-            player,
-            maze,
-            MOVE_SPEED * cos_a,
-            MOVE_SPEED * sin_a,
-        );
+        try_move(player, maze, speed * cos_a, speed * sin_a);
     }
 
     if window.is_key_down(Key::S) {
-        try_move(
-            player,
-            maze,
-            -MOVE_SPEED * cos_a,
-            -MOVE_SPEED * sin_a,
-        );
+        try_move(player, maze, -speed * cos_a, -speed * sin_a);
     }
 }

@@ -7,7 +7,20 @@ edition = "2021"
 
 [dependencies]
 nalgebra-glm = "0.18.0"
-minifb = "0.26.0"
+# Se fuerza el backend de X11 desactivando el de Wayland.
+#
+# El backend de Wayland de minifb 0.26 traduce las teclas con
+# `xkb_state_key_get_one_sym`, que aplica los modificadores: con Shift
+# presionado, la `w` llega como keysym `W` mayuscula. Su tabla de traduccion
+# solo contiene keysyms minusculos, asi que el evento cae en la rama por
+# defecto `_ => return` y se descarta. El soltado de la tecla se pierde y la
+# tecla queda pegada: el jugador camina o gira para siempre.
+#
+# El backend de X11 usa `XLookupKeysym(&ev.key, 0)` — indice 0, el keysym sin
+# modificadores — y no tiene el problema. Bajo Wayland funciona igual via
+# XWayland. Como efecto secundario, la compilacion es mas rapida: se caen
+# wayland-client, wayland-cursor, wayland-protocols, dlib y tempfile.
+minifb = { version = "0.26.0", default-features = false, features = ["x11"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # El raycaster lanza 1300 rayos por cuadro y sin optimizar no alcanza los 60

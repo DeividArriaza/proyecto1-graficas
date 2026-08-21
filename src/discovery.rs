@@ -69,6 +69,38 @@ impl Discovered {
         }
     }
 
+    /// Qué fracción del laberinto transitable se llegó a ver, de 0.0 a 1.0.
+    ///
+    /// Sólo cuenta las celdas por las que se puede caminar. El descubrimiento
+    /// también marca paredes —su cara es justo lo que el jugador ve— pero
+    /// incluirlas inflaría el porcentaje: en un laberinto perfecto hay más
+    /// caracteres de pared que de pasillo, así que el número diría más sobre la
+    /// geometría del mapa que sobre lo que el jugador exploró.
+    pub fn explored_fraction(&self, maze: &Maze) -> f32 {
+        let mut walkable = 0;
+        let mut seen = 0;
+
+        for (row, line) in maze.iter().enumerate() {
+            for (col, &cell) in line.iter().enumerate() {
+                if cell != ' ' && cell != 'g' && cell != 'G' {
+                    continue;
+                }
+
+                walkable += 1;
+
+                if self.is_known(col, row) {
+                    seen += 1;
+                }
+            }
+        }
+
+        if walkable == 0 {
+            return 0.0;
+        }
+
+        seen as f32 / walkable as f32
+    }
+
     /// Marca la celda que el jugador ocupa ahora mismo.
     ///
     /// Se llama siempre, con linterna o sin ella: por ahí pasaste, lo tanteaste
@@ -141,5 +173,64 @@ impl Discovered {
 
             d += DISCOVERY_STEP;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn maze_de_prueba() -> Maze {
+        // tres celdas transitables y el resto paredes.
+        vec![
+            "+-+-+".chars().collect(),
+            "|   |".chars().collect(),
+            "+-+-+".chars().collect(),
+        ]
+    }
+
+    #[test]
+    fn sin_explorar_la_fraccion_es_cero() {
+        let maze = maze_de_prueba();
+        let discovered = Discovered::new(&maze);
+
+        assert_eq!(discovered.explored_fraction(&maze), 0.0);
+    }
+
+    #[test]
+    fn solo_cuentan_las_celdas_transitables() {
+        let maze = maze_de_prueba();
+        let mut discovered = Discovered::new(&maze);
+
+        // una de las tres celdas transitables.
+        discovered.mark(1, 1);
+        assert!((discovered.explored_fraction(&maze) - 1.0 / 3.0).abs() < 1e-6);
+
+        // marcar paredes no mueve el porcentaje: el denominador las excluye, y
+        // el numerador también.
+        discovered.mark(0, 0);
+        discovered.mark(2, 0);
+        discovered.mark(4, 2);
+        assert!((discovered.explored_fraction(&maze) - 1.0 / 3.0).abs() < 1e-6);
+
+        // las tres transitables.
+        discovered.mark(2, 1);
+        discovered.mark(3, 1);
+        assert_eq!(discovered.explored_fraction(&maze), 1.0);
+    }
+
+    #[test]
+    fn la_meta_cuenta_como_transitable() {
+        let maze: Maze = vec![
+            "+-+".chars().collect(),
+            "|g|".chars().collect(),
+            "+-+".chars().collect(),
+        ];
+
+        let mut discovered = Discovered::new(&maze);
+        assert_eq!(discovered.explored_fraction(&maze), 0.0);
+
+        discovered.mark(1, 1);
+        assert_eq!(discovered.explored_fraction(&maze), 1.0);
     }
 }

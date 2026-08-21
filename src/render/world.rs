@@ -172,8 +172,3 @@ fn draw_ceiling_and_floor(
     let far = lighting::ambient(f32::MAX);
     framebuffer.fill_rows(horizon, horizon + 1, lighting::apply(FLOOR_COLOR, far));
 }
-
-/// Color del techo, que `main` usa como color de fondo del framebuffer.
-pub fn ceiling_color() -> u32 {
-    CEILING_COLOR
-}

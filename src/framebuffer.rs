@@ -17,9 +17,27 @@ impl Framebuffer {
         }
     }
 
-    /// Sin uso mientras la única vista cubra la pantalla completa. Lo van a
-    /// necesitar las pantallas de bienvenida y de victoria.
-    #[allow(dead_code)]
+    /// Multiplica todos los píxeles por `factor`, entre 0.0 y 1.0.
+    ///
+    /// Lo usa la pantalla de pausa para atenuar el nivel que quedó dibujado
+    /// detrás. Va aquí y no en `render::lighting` porque no es iluminación: es
+    /// una operación sobre el búfer entero, sin noción de distancia ni de luz.
+    ///
+    /// Cuidado al usarla: es acumulativa. Aplicarla cuadro tras cuadro sobre el
+    /// mismo contenido lo va llevando a negro, así que lo de abajo tiene que
+    /// redibujarse cada cuadro.
+    pub fn darken(&mut self, factor: f32) {
+        let factor = factor.clamp(0.0, 1.0);
+
+        for pixel in self.buffer.iter_mut() {
+            let r = ((*pixel >> 16) & 0xFF) as f32 * factor;
+            let g = ((*pixel >> 8) & 0xFF) as f32 * factor;
+            let b = (*pixel & 0xFF) as f32 * factor;
+
+            *pixel = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+        }
+    }
+
     pub fn clear(&mut self) {
         self.buffer.fill(self.background_color);
     }
