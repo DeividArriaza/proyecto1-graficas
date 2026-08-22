@@ -113,3 +113,86 @@ pub fn apply(color: u32, light: f32) -> u32 {
 
     (r << 16) | (g << 8) | b
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn la_ambiental_decae_y_toca_su_piso() {
+        assert!((ambient(0.0) - AMBIENT_MAX).abs() < 1e-6, "pegado a la pared");
+
+        // monótona no creciente
+        let mut previous = ambient(0.0);
+        for step in 1..200 {
+            let value = ambient(step as f32 * 5.0);
+
+            assert!(
+                value <= previous + 1e-6,
+                "a {} px la luz subió: {previous} -> {value}",
+                step * 5
+            );
+
+            previous = value;
+        }
+
+        assert!((ambient(f32::MAX) - AMBIENT_FLOOR).abs() < 1e-6, "el piso");
+        assert!(ambient(1e9) >= AMBIENT_FLOOR, "nunca por debajo del piso");
+    }
+
+    #[test]
+    fn el_haz_se_apaga_fuera_del_cono_y_del_alcance() {
+        // centro, pegado: máximo
+        assert!((beam(0.0, 0.0) - 1.0).abs() < 1e-6);
+
+        // fuera del cono, a cualquier distancia
+        assert_eq!(beam(0.0, 1.0), 0.0, "borde de pantalla");
+        assert_eq!(beam(100.0, -0.9), 0.0, "borde opuesto");
+
+        // más allá del alcance
+        assert_eq!(beam(BEAM_REACH, 0.0), 0.0);
+        assert_eq!(beam(BEAM_REACH * 2.0, 0.0), 0.0);
+
+        // simétrico respecto al centro
+        assert!((beam(200.0, 0.3) - beam(200.0, -0.3)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn la_caida_vertical_es_simetrica_y_acotada() {
+        assert!((beam_vertical(0.0) - 1.0).abs() < 1e-6, "en el horizonte");
+        assert_eq!(beam_vertical(1.0), 0.0, "borde inferior");
+        assert_eq!(beam_vertical(-1.0), 0.0, "borde superior");
+        assert!((beam_vertical(0.4) - beam_vertical(-0.4)).abs() < 1e-6);
+
+        for step in -30..=30 {
+            let value = beam_vertical(step as f32 / 20.0);
+            assert!((0.0..=1.0).contains(&value), "fuera de rango: {value}");
+        }
+    }
+
+    #[test]
+    fn aplicar_luz_respeta_los_extremos() {
+        assert_eq!(apply(0xFFFFFF, 1.0), 0xFFFFFF, "luz plena");
+        assert_eq!(apply(0xFFFFFF, 0.0), 0x000000, "sin luz");
+        assert_eq!(apply(0x000000, 1.0), 0x000000, "el negro sigue negro");
+
+        // una luz mayor que 1 no debe desbordar a otro canal
+        assert_eq!(apply(0xFFFFFF, 5.0), 0xFFFFFF, "se recorta arriba");
+
+        // y una negativa tampoco
+        assert_eq!(apply(0xFFFFFF, -2.0), 0x000000, "se recorta abajo");
+
+        // los canales no se mezclan entre sí
+        assert_eq!(apply(0xFF0000, 0.5), 0x7F0000);
+        assert_eq!(apply(0x00FF00, 0.5), 0x007F00);
+        assert_eq!(apply(0x0000FF, 0.5), 0x00007F);
+    }
+
+    /// El alfa de un sprite vive en el byte alto. `apply` devuelve sólo color, y
+    /// no debe dejar basura ahí ni dejarse confundir por él.
+    #[test]
+    fn aplicar_luz_ignora_el_canal_alfa() {
+        assert_eq!(apply(0xFF_FFFFFF, 1.0), 0xFFFFFF);
+        assert_eq!(apply(0x00_FF0000, 1.0), 0xFF0000);
+    }
+}

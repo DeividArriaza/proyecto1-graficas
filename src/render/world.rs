@@ -7,7 +7,7 @@ use crate::framebuffer::Framebuffer;
 use crate::maze::{Maze, BLOCK_SIZE};
 use crate::player::Player;
 use crate::render::lighting;
-use crate::render::FOV;
+use crate::render::{EYE_HEIGHT, FOV};
 use crate::textures::TextureSet;
 
 /// Color base del techo. Es un interior, no hay cielo.
@@ -15,12 +15,6 @@ const CEILING_COLOR: u32 = 0x14161A;
 
 /// Color base del piso.
 const FLOOR_COLOR: u32 = 0x3A3630;
-
-/// Altura del ojo del jugador dentro del bloque, en píxeles.
-///
-/// Media celda: el jugador ve el mundo desde el centro vertical de la pared, y
-/// por eso el horizonte cae a media pantalla.
-const EYE_HEIGHT: f32 = BLOCK_SIZE as f32 / 2.0;
 
 /// Cuánto se oscurecen las caras norte y sur respecto a las este y oeste.
 ///
@@ -30,13 +24,19 @@ const EYE_HEIGHT: f32 = BLOCK_SIZE as f32 / 2.0;
 /// El DDA es lo que hace esto posible, porque sabe qué eje cruzó cada rayo.
 const HORIZONTAL_FACE_SHADE: f32 = 0.72;
 
+/// Dibuja la vista y devuelve la distancia de la pared en cada columna.
+///
+/// Ese vector es el búfer de profundidad, y es lo que permite dibujar sprites
+/// después: sin él, un monstruo detrás de una pared se pintaría encima de ella y
+/// se vería atravesándola. La distancia es la perpendicular, la misma con la que
+/// se proyectan las estacas, así que se compara directo contra la del sprite.
 pub fn render(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
     flashlight: &Flashlight,
     textures: &TextureSet,
-) {
+) -> Vec<f32> {
     let width = framebuffer.width;
     let height = framebuffer.height;
     let half_height = height as f32 / 2.0;
@@ -58,6 +58,8 @@ pub fn render(
     // Media pantalla, en unidades del plano de proyección. La columna 0 cae en
     // -half_plane y la última en +half_plane.
     let half_plane = (FOV / 2.0).tan();
+
+    let mut depth = Vec::with_capacity(width);
 
     // UN RAYO POR COLUMNA
     // El reparto no es de ángulos parejos sino de posiciones parejas sobre el
@@ -82,6 +84,8 @@ pub fn render(
         // queda plana.
         let beta = angle - player.a;
         let distance = (intersect.distance * beta.cos()).max(1.0);
+
+        depth.push(distance);
 
         // Proyección en perspectiva por triángulos semejantes: la pared mide
         // BLOCK_SIZE en el mundo y está a `distance` del ojo.
@@ -124,6 +128,8 @@ pub fn render(
             framebuffer.pixel(i, y, lighting::apply(texel, light * face));
         }
     }
+
+    depth
 }
 
 /// Pinta techo y piso con su propio degradado de luz por distancia.

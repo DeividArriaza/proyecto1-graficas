@@ -102,3 +102,134 @@ impl Flashlight {
         1.0 - FLICKER_DEPTH * (1.0 - wobble) / 2.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arranca_encendida_y_llena() {
+        let light = Flashlight::new();
+
+        assert!(light.on);
+        assert_eq!(light.battery, 1.0);
+    }
+
+    /// Descarga hasta el apagón y **se detiene ahí**.
+    ///
+    /// Seguir llamando a `update` después recargaría, porque apagada la linterna
+    /// se repone. Pasarse de ese punto fue justamente lo que hizo fallar la
+    /// primera versión de estas pruebas.
+    fn drain(light: &mut Flashlight) {
+        let mut ticks = 0;
+
+        while light.on && ticks < 100_000 {
+            light.update(0.05);
+            ticks += 1;
+        }
+
+        assert!(!light.on, "no se apagó en un tiempo razonable");
+    }
+
+    #[test]
+    fn se_agota_y_se_apaga_sola() {
+        let mut light = Flashlight::new();
+
+        drain(&mut light);
+
+        assert_eq!(light.battery, 0.0, "la batería no baja de cero");
+        assert_eq!(light.intensity(), 0.0, "apagada no ilumina");
+    }
+
+    #[test]
+    fn no_se_puede_encender_sin_bateria() {
+        let mut light = Flashlight::new();
+
+        drain(&mut light);
+
+        // sin dejar pasar tiempo entre el apagón y el intento: con la batería en
+        // cero, la tecla no debe hacer nada.
+        light.toggle();
+
+        assert!(!light.on, "con batería vacía no debe encender");
+    }
+
+    /// Apenas recarga un poco, ya se puede volver a encender. Es lo que evita
+    /// que agotar la batería deje al jugador ciego para siempre.
+    #[test]
+    fn tras_recargar_un_poco_vuelve_a_encender() {
+        let mut light = Flashlight::new();
+
+        drain(&mut light);
+        light.update(1.0);
+
+        assert!(light.battery > 0.0, "debería haber recargado algo");
+
+        light.toggle();
+
+        assert!(light.on, "con algo de batería sí debe encender");
+    }
+
+    #[test]
+    fn recarga_apagada_y_no_pasa_de_llena() {
+        let mut light = Flashlight::new();
+
+        light.toggle();
+        assert!(!light.on);
+
+        // gastar un poco primero encendiéndola de nuevo
+        light.toggle();
+        light.update(10.0);
+        let after_use = light.battery;
+        assert!(after_use < 1.0);
+
+        light.toggle();
+        light.update(5.0);
+        assert!(light.battery > after_use, "debería haber recargado");
+
+        // mucho tiempo apagada: se llena y se queda ahí
+        for _ in 0..1000 {
+            light.update(1.0);
+        }
+        assert_eq!(light.battery, 1.0, "no debe pasar de llena");
+    }
+
+    #[test]
+    fn la_intensidad_siempre_esta_en_rango() {
+        let mut light = Flashlight::new();
+
+        // recorrer toda la descarga, incluida la zona de parpadeo
+        for _ in 0..2000 {
+            light.update(0.02);
+
+            let intensity = light.intensity();
+
+            assert!(
+                (0.0..=1.0).contains(&intensity),
+                "intensidad fuera de rango: {intensity} con batería {}",
+                light.battery
+            );
+        }
+    }
+
+    /// El desgaste tiene que depender del tiempo, no de los cuadros: la misma
+    /// duración total consumida en pasos chicos o grandes debe dejar la misma
+    /// batería.
+    #[test]
+    fn el_desgaste_no_depende_del_tamano_del_paso() {
+        let mut coarse = Flashlight::new();
+        coarse.update(10.0);
+
+        let mut fine = Flashlight::new();
+        for _ in 0..1000 {
+            fine.update(0.01);
+        }
+
+        assert!(
+            (coarse.battery - fine.battery).abs() < 1e-4,
+            "grueso {} vs fino {}",
+            coarse.battery,
+            fine.battery
+        );
+    }
+}

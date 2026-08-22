@@ -22,6 +22,7 @@ nalgebra-glm = "0.18.0"
 # wayland-client, wayland-cursor, wayland-protocols, dlib y tempfile.
 minifb = { version = "0.26.0", default-features = false, features = ["x11"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "mp3", "wav", "vorbis"] }
 
 # El raycaster lanza 1300 rayos por cuadro y sin optimizar no alcanza los 60
 # fps. Se optimiza también el perfil de desarrollo para que `cargo run` sea

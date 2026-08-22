@@ -28,22 +28,54 @@ const MISSING_TEXTURE: u32 = 0xFF00FF;
 pub struct Texture {
     pub width: usize,
     pub height: usize,
-    /// Píxeles en 0xRRGGBB, fila por fila.
+    /// Píxeles en 0xAARRGGBB, fila por fila.
+    ///
+    /// El alfa va en el byte alto. Las paredes lo ignoran —son opacas por
+    /// definición— pero los sprites lo necesitan: un monstruo sin transparencia
+    /// se ve como un rectángulo de fondo alrededor del bicho.
     pixels: Vec<u32>,
 }
 
 impl Texture {
+    /// Carga un PNG sin respaldo procedural.
+    ///
+    /// La usan los sprites, donde no tiene sentido inventar una imagen: una
+    /// pared generada en código se ve razonable, un monstruo no.
+    pub fn load(path: &str) -> Option<Self> {
+        let image = image::open(path).ok()?;
+        let rgba = image.to_rgba8();
+        let (width, height) = rgba.dimensions();
+
+        let pixels = rgba
+            .pixels()
+            .map(|p| {
+                ((p[3] as u32) << 24) | ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32
+            })
+            .collect();
+
+        Some(Texture {
+            width: width as usize,
+            height: height as usize,
+            pixels,
+        })
+    }
+
     /// Carga un PNG, o genera la textura de respaldo si el archivo no existe o
     /// no se puede leer.
     fn load_or_generate(path: &str, kind: Kind) -> Self {
         match image::open(path) {
             Ok(img) => {
-                let rgb = img.to_rgb8();
-                let (width, height) = rgb.dimensions();
+                let rgba = img.to_rgba8();
+                let (width, height) = rgba.dimensions();
 
-                let pixels = rgb
+                let pixels = rgba
                     .pixels()
-                    .map(|p| ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32)
+                    .map(|p| {
+                        ((p[3] as u32) << 24)
+                            | ((p[0] as u32) << 16)
+                            | ((p[1] as u32) << 8)
+                            | p[2] as u32
+                    })
                     .collect();
 
                 Texture {
@@ -59,8 +91,9 @@ impl Texture {
         }
     }
 
-    /// Color del píxel (x, y). Fuera de rango devuelve negro en vez de entrar en
-    /// pánico: una textura mal formada no debería tumbar el juego.
+    /// Color del píxel (x, y), en 0xAARRGGBB. Fuera de rango devuelve
+    /// transparente en vez de entrar en pánico: una textura mal formada no
+    /// debería tumbar el juego.
     pub fn texel(&self, x: usize, y: usize) -> u32 {
         if x >= self.width || y >= self.height {
             return 0;
@@ -140,13 +173,26 @@ impl TextureSet {
     }
 }
 
-/// Textura de un solo píxel, de color plano.
+/// Textura de un solo píxel, de color plano y opaca.
 fn flat(color: u32) -> Texture {
     Texture {
         width: 1,
         height: 1,
-        pixels: vec![color],
+        pixels: vec![color | OPAQUE],
     }
+}
+
+/// Bits de alfa de un píxel completamente opaco.
+pub const OPAQUE: u32 = 0xFF00_0000;
+
+/// ¿Este píxel se dibuja?
+///
+/// El umbral está a mitad de camino y no en cero: los bordes de un sprite suelen
+/// traer píxeles semitransparentes del antialias, y dibujarlos sobre un fondo
+/// que no se mezcla deja un halo. Descartarlos da un contorno duro, que es lo
+/// correcto sin composición alfa real.
+pub fn is_visible(pixel: u32) -> bool {
+    (pixel >> 24) >= 128
 }
 
 /// Ruido entero determinista.
@@ -184,7 +230,7 @@ fn generate(kind: Kind) -> Texture {
 
     for y in 0..size {
         for x in 0..size {
-            pixels.push(match kind {
+            pixels.push(OPAQUE | match kind {
                 Kind::Concrete => concrete_texel(x, y),
                 Kind::SteelPanel => steel_texel(x, y, size),
                 Kind::Hazard => hazard_texel(x, y),
@@ -268,4 +314,160 @@ fn terminal_texel(x: usize, y: usize, size: usize) -> u32 {
     let flickerless = (noise(x, y, 5) % 10) as f32 / 100.0;
 
     scale(GLOW, 0.55 + flickerless)
+}
+
+#[cfg(test)]
+mod layout_tests {
+    /// Diagnóstico: mapea qué columnas y filas de una hoja de sprites tienen
+    /// píxeles opacos. Los huecos totalmente transparentes son las separaciones
+    /// entre cuadros, así que el mapa revela la distribución real sin abrir la
+    /// imagen en un editor.
+    ///
+    ///     cargo test -- --ignored --nocapture distribucion_de_sprites
+    #[test]
+    #[ignore]
+    fn distribucion_de_sprites() {
+        for name in ["smorficus", "eviloogie", "demonario"] {
+            let path = format!("assets/sprites/{name}.png");
+
+            let Ok(image) = image::open(&path) else {
+                println!("{path}: ausente");
+                continue;
+            };
+
+            let rgba = image.to_rgba8();
+            let (width, height) = rgba.dimensions();
+
+            println!("\n=== {path}  {width}x{height}");
+
+            let opaque_column = |x: u32| (0..height).any(|y| rgba.get_pixel(x, y)[3] > 8);
+            let opaque_row = |y: u32| (0..width).any(|x| rgba.get_pixel(x, y)[3] > 8);
+
+            let cols: String = (0..width)
+                .map(|x| if opaque_column(x) { '#' } else { '.' })
+                .collect();
+            let rows: String = (0..height)
+                .map(|y| if opaque_row(y) { '#' } else { '.' })
+                .collect();
+
+            println!("columnas: {cols}");
+            println!("filas:    {rows}");
+
+            // límites de cada bloque contiguo de columnas ocupadas
+            let mut spans = Vec::new();
+            let mut start = None;
+            for x in 0..width {
+                match (opaque_column(x), start) {
+                    (true, None) => start = Some(x),
+                    (false, Some(s)) => {
+                        spans.push((s, x - 1));
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(s) = start {
+                spans.push((s, width - 1));
+            }
+
+            println!("bloques de columnas ({}): {spans:?}", spans.len());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn el_respaldo_procedural_tiene_el_tamano_declarado() {
+        let texture = Texture::load_or_generate("no/existe/nada.png", Kind::Concrete);
+
+        assert_eq!(texture.width, GENERATED_SIZE);
+        assert_eq!(texture.height, GENERATED_SIZE);
+    }
+
+    #[test]
+    fn las_texturas_generadas_son_opacas() {
+        for kind in [
+            Kind::Concrete,
+            Kind::SteelPanel,
+            Kind::Hazard,
+            Kind::Terminal,
+        ] {
+            let texture = generate(kind);
+
+            for y in 0..texture.height {
+                for x in 0..texture.width {
+                    assert!(
+                        is_visible(texture.texel(x, y)),
+                        "un píxel de pared salió transparente en ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuera_de_rango_devuelve_transparente() {
+        let texture = generate(Kind::Concrete);
+
+        assert_eq!(texture.texel(GENERATED_SIZE, 0), 0);
+        assert_eq!(texture.texel(0, GENERATED_SIZE), 0);
+        assert!(!is_visible(texture.texel(9999, 9999)));
+    }
+
+    /// El muestreo tiene que quedar dentro de la textura para cualquier `u` o
+    /// `v`, incluidos los valores límite y los que vienen mal.
+    #[test]
+    fn el_muestreo_nunca_se_sale() {
+        let texture = generate(Kind::Hazard);
+
+        for &u in &[0.0, 0.5, 0.999_999, 1.0, 1.5, -0.5, f32::NAN] {
+            let column = texture.column_of(u);
+
+            assert!(
+                column < texture.width,
+                "u = {u} dio la columna {column} de {}",
+                texture.width
+            );
+
+            for &v in &[0.0, 0.999_999, 1.0, 2.0, -1.0] {
+                // basta con que no entre en pánico y devuelva algo visible
+                assert!(is_visible(texture.column_texel(column, v)));
+            }
+        }
+    }
+
+    #[test]
+    fn el_umbral_de_visibilidad() {
+        assert!(!is_visible(0x00_FFFFFF), "alfa 0");
+        assert!(!is_visible(0x7F_FFFFFF), "alfa 127, justo por debajo");
+        assert!(is_visible(0x80_FFFFFF), "alfa 128, justo en el umbral");
+        assert!(is_visible(0xFF_000000), "alfa pleno, aunque el color sea negro");
+    }
+
+    #[test]
+    fn cada_tipo_de_pared_tiene_su_textura() {
+        let set = TextureSet::load();
+
+        // Se comparan por puntero: lo que importa es que no sean la misma, no
+        // qué color tienen.
+        let concrete = set.for_cell('|') as *const Texture;
+        let steel = set.for_cell('-') as *const Texture;
+        let hazard = set.for_cell('+') as *const Texture;
+        let goal = set.for_cell('g') as *const Texture;
+        let unknown = set.for_cell('?') as *const Texture;
+
+        let all = [concrete, steel, hazard, goal];
+
+        for (i, a) in all.iter().enumerate() {
+            for b in all.iter().skip(i + 1) {
+                assert_ne!(a, b, "dos tipos de pared comparten textura");
+            }
+        }
+
+        assert_ne!(concrete, unknown, "lo desconocido no debe verse como pared");
+        assert_eq!(set.for_cell('G') as *const Texture, goal, "g y G son la meta");
+    }
 }

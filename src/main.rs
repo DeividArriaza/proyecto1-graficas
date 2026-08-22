@@ -1,3 +1,4 @@
+mod audio;
 mod caster;
 mod discovery;
 mod flashlight;
@@ -5,23 +6,27 @@ mod fps;
 mod framebuffer;
 mod game;
 mod maze;
+mod monster;
 mod mazegen;
 mod player;
 mod render;
+mod sprites;
 mod textures;
 
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
+use crate::audio::{Audio, Effect};
 use crate::fps::FpsCounter;
 use crate::framebuffer::Framebuffer;
 use crate::game::pause::{Choice as PauseChoice, Pause};
-use crate::game::victory::Choice as VictoryChoice;
+use crate::game::outcome::Choice as OutcomeChoice;
 use crate::game::welcome::{Action, Menu};
-use crate::game::{Screen, Session, VictoryReport};
+use crate::game::{LevelReport, Outcome, Screen, Session};
 use crate::maze::BLOCK_SIZE;
 use crate::player::process_events;
 use crate::render::lighting;
+use crate::sprites::SpriteSheet;
 use crate::textures::TextureSet;
 
 /// Duración objetivo de un cuadro: 16 ms ~ 60 cuadros por segundo.
@@ -34,7 +39,12 @@ fn main() {
     let mut framebuffer = Framebuffer::new(width, height);
     let textures = TextureSet::load();
 
+    // La hoja del monstruo: 4 columnas por 2 filas. Si el archivo no está, el
+    // juego corre sin monstruo, igual que corre sin audio.
+    let monster_sheet = SpriteSheet::load("assets/sprites/eviloogie.png", 4, 2);
+
     let mut fps_counter = FpsCounter::new();
+    let mut audio = Audio::new();
 
     let mut screen = Screen::Welcome;
     let mut menu = Menu::new();
@@ -45,10 +55,10 @@ fn main() {
     // partida antes de tocarla.
     let mut session: Option<Session> = None;
 
-    // El informe del último nivel superado. Vive aparte de `Screen` por lo mismo
+    // El informe del último nivel terminado. Vive aparte de `Screen` por lo mismo
     // que la sesión: así se puede reasignar la pantalla sin chocar con el
     // préstamo de los datos que esa pantalla está mostrando.
-    let mut victory: Option<VictoryReport> = None;
+    let mut report: Option<LevelReport> = None;
 
     let mut window = Window::new("Maze Runner", width, height, WindowOptions::default()).unwrap();
 
@@ -108,14 +118,27 @@ fn main() {
                     // La sesión no se toca: sigue viva y congelada esperando
                     // que se reanude. Eso es lo que hace que sea una pausa.
                     pause.reset();
+                    audio.set_paused(true);
                     screen = Screen::Paused;
                 } else if let Some(state) = session.as_mut() {
-                    play(&mut window, state, delta);
+                    play(&mut window, state, &mut audio, monster_sheet.as_ref(), delta);
 
-                    if reached_goal(state) {
-                        victory = Some(state.report());
+                    // Se revisa primero al monstruo: si te atrapa parado
+                    // sobre la meta, gana la captura. Llegar y ser atrapado en el
+                    // mismo cuadro es un empate, y perder es el desenlace más
+                    // informativo de los dos.
+                    if let Some(caught) = caught_by_monster(state) {
+                        audio.stop_footsteps();
+                        audio.play(Effect::Defeat);
+                        report = Some(caught);
                         session = None;
-                        screen = Screen::Victory;
+                        screen = Screen::Outcome;
+                    } else if reached_goal(state) {
+                        audio.stop_footsteps();
+                        audio.play(Effect::Victory);
+                        report = Some(state.report(Outcome::Escaped));
+                        session = None;
+                        screen = Screen::Outcome;
                     }
                 } else {
                     // No debería pasar: pantalla y sesión se asignan juntas.
@@ -132,6 +155,7 @@ fn main() {
                         state.mouse.reset();
                     }
 
+                    audio.set_paused(false);
                     screen = Screen::Playing;
                 }
                 Some(PauseChoice::Retry) => {
@@ -139,26 +163,34 @@ fn main() {
                         session = Some(Session::start(level));
                     }
 
+                    audio.set_paused(false);
                     screen = Screen::Playing;
                 }
                 Some(PauseChoice::Menu) => {
+                    audio.stop_footsteps();
+                    audio.set_paused(false);
                     session = None;
                     screen = Screen::Welcome;
                 }
+                // Los ajustes de música no cambian de pantalla: se aplican y el
+                // menú sigue abierto para poder seguir oyendo el resultado.
+                Some(PauseChoice::ToggleMusic) => audio.toggle_music(),
+                Some(PauseChoice::VolumeUp) => audio.change_music_volume(true),
+                Some(PauseChoice::VolumeDown) => audio.change_music_volume(false),
                 None => {}
             },
 
-            Screen::Victory => match game::victory::update(&window) {
-                Some(VictoryChoice::Menu) => {
-                    victory = None;
+            Screen::Outcome => match game::outcome::update(&window) {
+                Some(OutcomeChoice::Menu) => {
+                    report = None;
                     screen = Screen::Welcome;
                 }
-                Some(VictoryChoice::Retry) => {
-                    if let Some(level) = victory.map(|report| report.level) {
+                Some(OutcomeChoice::Retry) => {
+                    if let Some(level) = report.map(|report| report.level) {
                         session = Some(Session::start(level));
                     }
 
-                    victory = None;
+                    report = None;
                     screen = Screen::Playing;
                 }
                 None => {}
@@ -180,7 +212,7 @@ fn main() {
 
             Screen::Playing => {
                 if let Some(state) = session.as_ref() {
-                    draw_level(&mut framebuffer, state, &textures, fps);
+                    draw_level(&mut framebuffer, state, &textures, monster_sheet.as_ref(), fps);
                 }
             }
 
@@ -189,14 +221,19 @@ fn main() {
                     // El nivel se redibuja aunque esté detenido: el atenuado de
                     // la pausa se aplica sobre el búfer, así que sin repintar
                     // debajo la imagen se iría a negro cuadro a cuadro.
-                    draw_level(&mut framebuffer, state, &textures, fps);
-                    game::pause::draw(&mut framebuffer, &pause);
+                    draw_level(&mut framebuffer, state, &textures, monster_sheet.as_ref(), fps);
+                    game::pause::draw(
+                        &mut framebuffer,
+                        &pause,
+                        audio.music_enabled(),
+                        audio.music_volume_fraction(),
+                    );
                 }
             }
 
-            Screen::Victory => {
-                if let Some(report) = victory.as_ref() {
-                    game::victory::draw(&mut framebuffer, report);
+            Screen::Outcome => {
+                if let Some(report) = report.as_ref() {
+                    game::outcome::draw(&mut framebuffer, report);
                 }
             }
         }
@@ -219,8 +256,19 @@ fn main() {
 }
 
 /// Avanza un cuadro de partida: entrada, linterna y descubrimiento.
-fn play(window: &mut Window, state: &mut Session, delta: f32) {
+fn play(
+    window: &mut Window,
+    state: &mut Session,
+    audio: &mut Audio,
+    sprites: Option<&SpriteSheet>,
+    delta: f32,
+) {
     state.elapsed += delta;
+
+    // La posición se guarda antes de mover para saber si el jugador avanzó de
+    // verdad. Preguntar por las teclas no alcanza: empujando contra una pared se
+    // presiona W sin desplazarse, y los pasos sonarían igual.
+    let previous = state.player.pos;
 
     process_events(
         window,
@@ -230,13 +278,23 @@ fn play(window: &mut Window, state: &mut Session, delta: f32) {
         delta,
     );
 
+    let moved = (state.player.pos - previous).norm() > 0.5;
+    audio.footsteps(delta, moved, player::is_running(window));
+
     // `M` prende y apaga la linterna. El desgaste corre aparte: gasta mientras
     // está encendida y recarga, más despacio, mientras no.
     if window.is_key_pressed(Key::M, KeyRepeat::No) {
         state.flashlight.toggle();
+        audio.play(Effect::Flashlight);
     }
 
     state.flashlight.update(delta);
+
+    // La animación avanza con el tiempo, no con los cuadros: el monstruo respira
+    // al mismo ritmo a 15 o a 60 fps.
+    if let (Some(monster), Some(sheet)) = (state.monster.as_mut(), sprites) {
+        monster.update(delta, sheet.frames());
+    }
 
     // La celda propia se recuerda siempre; el resto sólo si hay luz que lo
     // alcance. El alcance se escala con la intensidad, así que la batería baja
@@ -250,6 +308,17 @@ fn play(window: &mut Window, state: &mut Session, delta: f32) {
             lighting::beam_reach() * state.flashlight.intensity(),
         );
     }
+}
+
+/// ¿El monstruo atrapó al jugador? Devuelve el informe si sí.
+fn caught_by_monster(state: &Session) -> Option<LevelReport> {
+    let monster = state.monster.as_ref()?;
+
+    if !monster.catches(state.player.pos) {
+        return None;
+    }
+
+    Some(state.report(Outcome::Caught))
 }
 
 /// ¿El jugador llegó a la meta?
@@ -270,18 +339,35 @@ fn draw_level(
     framebuffer: &mut Framebuffer,
     state: &Session,
     textures: &TextureSet,
+    sprites: Option<&SpriteSheet>,
     fps: f32,
 ) {
     // La vista pinta techo y piso sobre la pantalla completa, así que no
     // necesita `clear()` previo: serían 1.17 millones de píxeles sobrescritos
     // para nada.
-    render::world::render(
+    // La vista devuelve la distancia de la pared en cada columna. Ese búfer de
+    // profundidad es lo que permite que los sprites queden ocultos detrás de las
+    // paredes en vez de pintarse encima.
+    let depth = render::world::render(
         framebuffer,
         &state.maze,
         &state.player,
         &state.flashlight,
         textures,
     );
+
+    // Los sprites van entre el mundo y el HUD: se ocluyen con las paredes, pero
+    // nada del juego tapa el minimapa ni el contador.
+    if let (Some(monster), Some(sheet)) = (state.monster.as_ref(), sprites) {
+        render::billboard::draw(
+            framebuffer,
+            &depth,
+            &state.player,
+            monster,
+            sheet,
+            &state.flashlight,
+        );
+    }
 
     // Los sobreimpresos van al final, para quedar encima de la vista.
     render::minimap::draw(

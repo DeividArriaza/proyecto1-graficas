@@ -124,3 +124,110 @@ impl Framebuffer {
         self.current_color = color;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dibujar_fuera_de_los_limites_no_entra_en_panico() {
+        let mut fb = Framebuffer::new(10, 10);
+
+        // cada uno de estos se sale por un lado distinto
+        fb.pixel(100, 5, 0xFF0000);
+        fb.pixel(5, 100, 0xFF0000);
+        fb.point(usize::MAX, 0);
+        fb.rect(8, 8, 100, 100, 0xFF0000);
+        fb.rect(100, 100, 10, 10, 0xFF0000);
+        fb.column(100, 0, 5, 0xFF0000);
+        fb.column(5, 0, 100, 0xFF0000);
+        fb.fill_rows(0, 100, 0xFF0000);
+        fb.fill_rows(50, 60, 0xFF0000);
+    }
+
+    #[test]
+    fn el_rectangulo_se_recorta_al_borde() {
+        let mut fb = Framebuffer::new(4, 4);
+
+        // pedir 3x3 desde (2,2) sólo puede pintar 2x2
+        fb.rect(2, 2, 3, 3, 0xABCDEF);
+
+        assert_eq!(fb.buffer[2 * 4 + 2], 0xABCDEF, "dentro");
+        assert_eq!(fb.buffer[3 * 4 + 3], 0xABCDEF, "esquina");
+        assert_eq!(fb.buffer[1 * 4 + 2], 0, "una fila más arriba, intacta");
+        assert_eq!(fb.buffer[2 * 4 + 1], 0, "una columna a la izquierda, intacta");
+    }
+
+    /// Un rectángulo no puede desbordarse a la fila siguiente. Si el recorte
+    /// horizontal se hiciera mal, pintar de ancho excesivo escribiría en el
+    /// principio de la fila de abajo y se vería como una banda diagonal.
+    #[test]
+    fn el_rectangulo_no_se_derrama_a_la_fila_siguiente() {
+        let mut fb = Framebuffer::new(4, 4);
+
+        fb.rect(2, 0, 10, 1, 0xABCDEF);
+
+        assert_eq!(fb.buffer[0], 0, "columna 0 de la fila 0 intacta");
+        assert_eq!(fb.buffer[2], 0xABCDEF);
+        assert_eq!(fb.buffer[3], 0xABCDEF);
+        assert_eq!(fb.buffer[4], 0, "la fila 1 no debe haberse tocado");
+        assert_eq!(fb.buffer[5], 0);
+    }
+
+    #[test]
+    fn un_rectangulo_vacio_no_pinta_nada() {
+        let mut fb = Framebuffer::new(4, 4);
+
+        fb.rect(1, 1, 0, 5, 0xFF0000);
+        fb.rect(1, 1, 5, 0, 0xFF0000);
+
+        assert!(fb.buffer.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn atenuar_en_los_extremos() {
+        let mut fb = Framebuffer::new(2, 1);
+
+        fb.buffer[0] = 0xFFFFFF;
+        fb.buffer[1] = 0x804020;
+
+        fb.darken(1.0);
+        assert_eq!(fb.buffer[0], 0xFFFFFF, "factor 1 no cambia nada");
+        assert_eq!(fb.buffer[1], 0x804020);
+
+        fb.darken(0.0);
+        assert_eq!(fb.buffer[0], 0x000000, "factor 0 lleva a negro");
+        assert_eq!(fb.buffer[1], 0x000000);
+    }
+
+    #[test]
+    fn atenuar_no_mezcla_canales() {
+        let mut fb = Framebuffer::new(1, 1);
+
+        fb.buffer[0] = 0xFF0000;
+        fb.darken(0.5);
+
+        assert_eq!(fb.buffer[0], 0x7F0000, "el rojo baja y los otros siguen en cero");
+    }
+
+    #[test]
+    fn limpiar_usa_el_color_de_fondo() {
+        let mut fb = Framebuffer::new(3, 3);
+
+        fb.set_background_color(0x123456);
+        fb.clear();
+
+        assert!(fb.buffer.iter().all(|&p| p == 0x123456));
+    }
+
+    #[test]
+    fn las_filas_se_pintan_completas() {
+        let mut fb = Framebuffer::new(3, 3);
+
+        fb.fill_rows(1, 2, 0xAAAAAA);
+
+        assert!(fb.buffer[0..3].iter().all(|&p| p == 0), "fila 0 intacta");
+        assert!(fb.buffer[3..6].iter().all(|&p| p == 0xAAAAAA), "fila 1 pintada");
+        assert!(fb.buffer[6..9].iter().all(|&p| p == 0), "fila 2 intacta");
+    }
+}

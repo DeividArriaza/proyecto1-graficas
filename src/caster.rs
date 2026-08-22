@@ -185,3 +185,152 @@ fn texture_x(
     // textura nunca caiga fuera del último píxel.
     tx.clamp(0.0, 0.999_999)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use nalgebra_glm::Vec2;
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// Pasillo de 3x3 celdas con el centro libre.
+    ///
+    ///     +-+
+    ///     | |
+    ///     +-+
+    fn room() -> Maze {
+        vec![
+            "+-+".chars().collect(),
+            "| |".chars().collect(),
+            "+-+".chars().collect(),
+        ]
+    }
+
+    fn player_at(x: f32, y: f32, a: f32) -> Player {
+        Player {
+            pos: Vec2::new(x, y),
+            a,
+        }
+    }
+
+    #[test]
+    fn distancia_exacta_hacia_la_derecha() {
+        let maze = room();
+        // centro de la celda libre (150, 150), mirando a +x
+        let player = player_at(150.0, 150.0, 0.0);
+
+        let hit = cast_ray(&maze, &player, 0.0);
+
+        // la pared de la derecha arranca en x=200
+        assert!(
+            (hit.distance - 50.0).abs() < 0.01,
+            "esperaba 50, dio {}",
+            hit.distance
+        );
+        assert!(hit.vertical, "cruzó una frontera vertical");
+        assert_eq!(hit.impact, '|');
+    }
+
+    #[test]
+    fn distancia_exacta_hacia_abajo() {
+        let maze = room();
+        let player = player_at(150.0, 150.0, 0.0);
+
+        let hit = cast_ray(&maze, &player, FRAC_PI_2);
+
+        assert!(
+            (hit.distance - 50.0).abs() < 0.01,
+            "esperaba 50, dio {}",
+            hit.distance
+        );
+        assert!(!hit.vertical, "cruzó una frontera horizontal");
+        assert_eq!(hit.impact, '-');
+    }
+
+    /// Un rayo perfectamente horizontal tiene la componente `sin` en cero, lo
+    /// que hace infinito el paso en Y. Si el DDA no lo tolerara, aquí colgaría o
+    /// devolvería un disparate.
+    #[test]
+    fn los_rayos_alineados_con_los_ejes_no_cuelgan() {
+        let maze = room();
+        let player = player_at(150.0, 150.0, 0.0);
+
+        for angle in [0.0, FRAC_PI_2, PI, 3.0 * FRAC_PI_2] {
+            let hit = cast_ray(&maze, &player, angle);
+
+            assert!(
+                hit.distance.is_finite() && hit.distance > 0.0,
+                "ángulo {angle}: distancia {}",
+                hit.distance
+            );
+        }
+    }
+
+    #[test]
+    fn la_coordenada_de_textura_esta_en_rango() {
+        let maze = room();
+        let player = player_at(150.0, 150.0, 0.0);
+
+        // un barrido completo, para cubrir las cuatro caras y las diagonales
+        for step in 0..720 {
+            let angle = step as f32 * PI / 360.0;
+            let hit = cast_ray(&maze, &player, angle);
+
+            assert!(
+                (0.0..1.0).contains(&hit.tx),
+                "ángulo {angle}: tx = {}",
+                hit.tx
+            );
+            assert!(hit.distance.is_finite(), "ángulo {angle}: distancia infinita");
+        }
+    }
+
+    #[test]
+    fn desde_dentro_de_una_pared_devuelve_cero() {
+        let maze = room();
+        // (50, 50) cae en la esquina '+'
+        let player = player_at(50.0, 50.0, 0.0);
+
+        let hit = cast_ray(&maze, &player, 0.0);
+
+        assert_eq!(hit.distance, 0.0);
+        assert_eq!(hit.impact, '+');
+    }
+
+    #[test]
+    fn un_laberinto_sin_bordes_no_cuelga() {
+        // todo espacio libre: el rayo nunca choca. El tope de celdas es la red
+        // de seguridad que evita el bucle infinito.
+        let maze: Maze = (0..3).map(|_| "   ".chars().collect()).collect();
+        let player = player_at(150.0, 150.0, 0.0);
+
+        let hit = cast_ray(&maze, &player, 0.3);
+
+        assert!(hit.distance.is_finite());
+    }
+
+    /// La distancia perpendicular de una pared plana tiene que ser la misma para
+    /// todos los rayos que la miran, que es justo lo que corrige el ojo de pez.
+    #[test]
+    fn la_correccion_de_ojo_de_pez_aplana_la_pared() {
+        let maze = room();
+        let player = player_at(150.0, 150.0, 0.0);
+
+        for step in -20..=20 {
+            let beta = step as f32 * 0.02;
+            let hit = cast_ray(&maze, &player, beta);
+
+            // sólo los rayos que siguen pegando en la cara de la derecha
+            if hit.impact != '|' || !hit.vertical {
+                continue;
+            }
+
+            let perpendicular = hit.distance * beta.cos();
+
+            assert!(
+                (perpendicular - 50.0).abs() < 0.5,
+                "beta {beta}: perpendicular {perpendicular}, esperaba 50",
+            );
+        }
+    }
+}

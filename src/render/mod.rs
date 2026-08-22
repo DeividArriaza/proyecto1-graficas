@@ -5,6 +5,7 @@
 //! ninguno sabe de los otros.
 
 pub mod hud;
+pub mod billboard;
 pub mod lighting;
 pub mod minimap;
 pub mod text;
@@ -21,3 +22,11 @@ use std::f32::consts::PI;
 /// Bajarlo cierra el encuadre y da claustrofobia; subirlo muestra más laberinto
 /// pero estira las paredes en los bordes.
 pub const FOV: f32 = PI / 2.0;
+
+/// Altura del ojo del jugador dentro del bloque, en píxeles.
+///
+/// Media celda: el jugador ve el mundo desde el centro vertical de la pared, y
+/// por eso el horizonte cae a media pantalla. Lo comparten la vista en primera
+/// persona y la proyección de sprites, que necesita saber dónde está el piso
+/// para apoyarlos.
+pub const EYE_HEIGHT: f32 = crate::maze::BLOCK_SIZE as f32 / 2.0;

@@ -167,3 +167,83 @@ pub fn draw_text_centered(
 
     draw_text(framebuffer, x, y, scale, color, text);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn el_ancho_de_un_texto_vacio_es_cero() {
+        assert_eq!(text_width("", 1), 0);
+        assert_eq!(text_width("", 5), 0);
+    }
+
+    #[test]
+    fn el_ancho_crece_con_los_caracteres_y_la_escala() {
+        assert_eq!(text_width("A", 1), GLYPH_WIDTH);
+        assert_eq!(text_width("A", 3), GLYPH_WIDTH * 3);
+
+        // dos glifos: dos anchos más una separación
+        assert_eq!(text_width("AB", 1), GLYPH_WIDTH * 2 + 1);
+
+        assert!(text_width("HOLA", 2) > text_width("HOL", 2));
+    }
+
+    #[test]
+    fn el_alto_solo_depende_de_la_escala() {
+        assert_eq!(text_height(1), GLYPH_HEIGHT);
+        assert_eq!(text_height(4), GLYPH_HEIGHT * 4);
+    }
+
+    #[test]
+    fn las_minusculas_usan_el_glifo_de_la_mayuscula() {
+        assert_eq!(glyph('a'), glyph('A'));
+        assert_eq!(glyph('z'), glyph('Z'));
+    }
+
+    #[test]
+    fn un_caracter_desconocido_da_la_caja() {
+        assert_eq!(glyph('@'), UNKNOWN);
+        assert_eq!(glyph('€'), UNKNOWN);
+    }
+
+    /// La fuente tiene que cubrir todo lo que el juego escribe en pantalla. Un
+    /// glifo faltante aparece como una caja hueca, y es fácil que se cuele al
+    /// agregar un texto nuevo.
+    #[test]
+    fn la_fuente_cubre_los_textos_del_juego() {
+        let usados = concat!(
+            "MAZE RUNNER",
+            "INSTALACION ABANDONADA - ENCUENTRA LA SALIDA",
+            "NIVEL 1 - ALMACEN NIVEL 2 - PASILLOS NIVEL 3 - SUBSUELO",
+            "MODO INFINITO SALIR",
+            "W/S O FLECHAS PARA ELEGIR ENTER CONFIRMA ESC SALE",
+            "WASD MOVER MOUSE O AD GIRAR SHIFT CORRER M LINTERNA ESC MENU",
+            "PAUSA CONTINUAR REINTENTAR NIVEL MENU PRINCIPAL",
+            "MUSICA ENCENDIDA APAGADA VOLUMEN",
+            "ESC PARA SEGUIR JUGANDO FLECHAS LATERALES AJUSTAN EL VOLUMEN",
+            "SALIDA ALCANZADA TE ATRAPARON",
+            "TIEMPO EXPLORADO BATERIA",
+            "ENTER VOLVER AL MENU R JUGAR OTRA VEZ",
+            "FPS LINTERNA ON OFF",
+            "0123456789:%.",
+        );
+
+        for c in usados.chars() {
+            assert_ne!(
+                glyph(c),
+                UNKNOWN,
+                "la fuente no tiene el carácter {c:?}, se vería como una caja"
+            );
+        }
+    }
+
+    #[test]
+    fn dibujar_en_el_borde_no_entra_en_panico() {
+        let mut fb = Framebuffer::new(20, 12);
+
+        draw_text(&mut fb, 18, 10, 3, 0xFFFFFF, "TEXTO LARGUISIMO");
+        draw_text(&mut fb, 0, 0, 1, 0xFFFFFF, "AB");
+        draw_text_centered(&mut fb, 5, 9, 0xFFFFFF, "MAS ANCHO QUE LA PANTALLA");
+    }
+}

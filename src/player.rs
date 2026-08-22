@@ -260,3 +260,142 @@ pub fn process_events(
         try_move(player, maze, -speed * cos_a, -speed * sin_a);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Laberinto de 5x3 con un pasillo horizontal en el medio.
+    ///
+    ///     +-+-+
+    ///     |   |
+    ///     +-+-+
+    fn corridor() -> Maze {
+        vec![
+            "+-+-+".chars().collect(),
+            "|   |".chars().collect(),
+            "+-+-+".chars().collect(),
+        ]
+    }
+
+    fn player_at(x: f32, y: f32) -> Player {
+        Player {
+            pos: Vec2::new(x, y),
+            a: 0.0,
+        }
+    }
+
+    #[test]
+    fn el_borde_del_laberinto_es_pared() {
+        let maze = corridor();
+
+        assert!(is_wall(&maze, -1.0, 150.0), "fuera por la izquierda");
+        assert!(is_wall(&maze, 150.0, -1.0), "fuera por arriba");
+        assert!(is_wall(&maze, 9999.0, 150.0), "fuera por la derecha");
+        assert!(is_wall(&maze, 150.0, 9999.0), "fuera por abajo");
+    }
+
+    #[test]
+    fn la_meta_es_transitable() {
+        let maze: Maze = vec!["|g|".chars().collect()];
+
+        assert!(!is_wall(&maze, 150.0, 50.0), "la meta debe poder pisarse");
+        assert!(is_wall(&maze, 50.0, 50.0), "la pared no");
+    }
+
+    #[test]
+    fn no_se_atraviesa_una_pared() {
+        let maze = corridor();
+
+        // en el centro del pasillo, empujando hacia la pared de arriba
+        let mut player = player_at(250.0, 150.0);
+        try_move(&mut player, &maze, 0.0, -500.0);
+
+        assert!(
+            player.pos.y > 100.0,
+            "quedó en y={}, dentro de la pared de arriba",
+            player.pos.y
+        );
+    }
+
+    #[test]
+    fn se_desliza_a_lo_largo_de_una_pared() {
+        let maze = corridor();
+
+        // diagonal contra la pared de arriba: el eje Y se bloquea, el X avanza.
+        let mut player = player_at(250.0, 150.0);
+        let before_x = player.pos.x;
+
+        try_move(&mut player, &maze, 30.0, -500.0);
+
+        assert!(
+            player.pos.x > before_x,
+            "el eje X debería seguir libre, quedó en {}",
+            player.pos.x
+        );
+        assert!(player.pos.y > 100.0, "el eje Y debería estar bloqueado");
+    }
+
+    /// Sin subdivisión del movimiento, un desplazamiento mayor que el grosor de
+    /// una pared la cruzaría sin tocarla: la comprobación sólo mira el destino.
+    /// Esto es lo que puede pasar corriendo con un cuadro largo.
+    #[test]
+    fn un_salto_enorme_no_atraviesa_la_pared() {
+        let maze = corridor();
+
+        let mut player = player_at(250.0, 150.0);
+        try_move(&mut player, &maze, 0.0, -5000.0);
+
+        assert!(
+            player.pos.y > 100.0,
+            "atravesó la pared de un salto: quedó en y={}",
+            player.pos.y
+        );
+
+        // y tampoco hacia el otro lado
+        let mut player = player_at(250.0, 150.0);
+        try_move(&mut player, &maze, 5000.0, 0.0);
+
+        assert!(
+            player.pos.x < 400.0,
+            "atravesó la pared derecha: quedó en x={}",
+            player.pos.x
+        );
+    }
+
+    #[test]
+    fn el_movimiento_libre_avanza_lo_pedido() {
+        // laberinto ancho, sin nada que estorbe cerca
+        let maze: Maze = (0..5)
+            .map(|_| "          ".chars().collect::<Vec<char>>())
+            .collect();
+
+        let mut player = player_at(250.0, 250.0);
+        try_move(&mut player, &maze, 40.0, 0.0);
+
+        assert!(
+            (player.pos.x - 290.0).abs() < 0.001,
+            "esperaba x=290, quedó en {}",
+            player.pos.x
+        );
+    }
+
+    #[test]
+    fn el_margen_de_colision_deja_espacio() {
+        let maze = corridor();
+
+        // empujar hasta el fondo contra la pared de arriba, muchas veces
+        let mut player = player_at(250.0, 150.0);
+        for _ in 0..50 {
+            try_move(&mut player, &maze, 0.0, -5.0);
+        }
+
+        // la pared de arriba termina en y=100; con margen de 20 no debería
+        // acercarse más que eso.
+        assert!(
+            player.pos.y >= 100.0 + COLLISION_MARGIN - 5.0,
+            "se pegó demasiado a la pared: y={}",
+            player.pos.y
+        );
+    }
+}
