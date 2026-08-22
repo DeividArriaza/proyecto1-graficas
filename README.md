@@ -11,7 +11,11 @@ Proyecto 1 del curso **cc2018 – Gráficas por Computadora** (UVG).
 cargo run --release
 ```
 
-Se abre una ventana de 1300 x 900. El juego arranca en el menú.
+Se abre una ventana de 960 x 600. El juego arranca en el menú.
+
+La ventana se puede **redimensionar y maximizar**, y el contenido se escala.
+`minifb` no ofrece pantalla completa, así que maximizar es lo más cerca que se
+llega. Al maximizar a una proporción distinta de 8:5 la imagen se estira un poco.
 
 No hace falta ningún archivo externo para jugar: si falta una textura se genera
 en código, y si falta un archivo de audio se omite en silencio.

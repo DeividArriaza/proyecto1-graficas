@@ -13,7 +13,7 @@ mod render;
 mod sprites;
 mod textures;
 
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, ScaleMode, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
 use crate::audio::{Audio, Effect};
@@ -29,12 +29,30 @@ use crate::render::lighting;
 use crate::sprites::SpriteSheet;
 use crate::textures::TextureSet;
 
-/// Duración objetivo de un cuadro: 16 ms ~ 60 cuadros por segundo.
-const FRAME_TIME: Duration = Duration::from_millis(16);
+/// Duración objetivo de un cuadro.
+///
+/// 16.667 ms y no 16: a 16 ms serían 62.5 cuadros por segundo, un 4% más rápido
+/// que un monitor de 60 Hz. Ese desfase hace que la costura del desgarro de
+/// imagen barra la pantalla sin parar. Al igualar el período del monitor, la
+/// costura se queda casi quieta y la mayor parte del tiempo fuera de vista.
+const FRAME_TIME: Duration = Duration::from_micros(16_667);
+
+/// Tamaño del búfer de render, en píxeles.
+///
+/// Más chico que la pantalla de cualquier portátil moderna, decoración de
+/// ventana y barra de tareas incluidas. Con 900 de alto la ventana se salía por
+/// abajo en pantallas de 768.
+///
+/// No es el tamaño de la ventana: con `resize` activado, la ventana se puede
+/// agrandar o maximizar y el búfer se escala para llenarla. `minifb` 0.26 no
+/// tiene pantalla completa —ni una sola mención en toda la crate—, así que
+/// maximizar es lo más cerca que se llega.
+const RENDER_WIDTH: usize = 960;
+const RENDER_HEIGHT: usize = 600;
 
 fn main() {
-    let width = 1300;
-    let height = 900;
+    let width = RENDER_WIDTH;
+    let height = RENDER_HEIGHT;
 
     let mut framebuffer = Framebuffer::new(width, height);
     let textures = TextureSet::load();
@@ -60,7 +78,26 @@ fn main() {
     // préstamo de los datos que esa pantalla está mostrando.
     let mut report: Option<LevelReport> = None;
 
-    let mut window = Window::new("Lethal Maze", width, height, WindowOptions::default()).unwrap();
+    let mut window = Window::new(
+        "Lethal Maze",
+        width,
+        height,
+        WindowOptions {
+            // Permite maximizar, que es el sustituto de pantalla completa.
+            resize: true,
+            // Se estira para llenar la ventana. Lo natural sería
+            // `AspectRatioStretch`, que conserva la proporción y rellena con
+            // barras, pero **provoca un segfault** en el backend X11 de minifb
+            // 0.26: comprobado en aislamiento, con `resize` y sin él. `Stretch`
+            // es la única opción de escalado que no se cae.
+            //
+            // La consecuencia: si se maximiza a una proporción distinta de 8:5,
+            // la imagen se deforma un poco. Es el precio de que no se caiga.
+            scale_mode: ScaleMode::Stretch,
+            ..WindowOptions::default()
+        },
+    )
+    .unwrap();
 
     // El cursor se esconde dentro del nivel y reaparece en el menú. Se lleva la
     // cuenta para llamar a `set_cursor_visibility` sólo cuando cambia: es una
