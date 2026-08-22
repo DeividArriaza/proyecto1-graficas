@@ -14,6 +14,28 @@ pub type Maze = Vec<Vec<char>>;
 /// cenital como la altura de la pared que se proyecta en la vista 3D.
 pub const BLOCK_SIZE: usize = 100;
 
+/// Qué celda contiene el punto (x, y) del mundo.
+///
+/// Fuera del laberinto devuelve `'|'`: los bordes cuentan como pared por todos
+/// lados, y así ni el jugador ni el monstruo pueden salirse del mapa.
+///
+/// Vive acá y no en quien la usa porque el jugador y el monstruo hacen la misma
+/// pregunta con respuestas distintas: el jugador puede pisar la meta —tiene que
+/// poder, para ganar—, el monstruo no.
+pub fn cell_at(maze: &Maze, x: f32, y: f32) -> char {
+    if x < 0.0 || y < 0.0 {
+        return '|';
+    }
+
+    let i = x as usize / BLOCK_SIZE;
+    let j = y as usize / BLOCK_SIZE;
+
+    maze.get(j)
+        .and_then(|row| row.get(i))
+        .copied()
+        .unwrap_or('|')
+}
+
 /// Ángulo de vista inicial del jugador, en radianes.
 const INITIAL_ANGLE: f32 = PI / 3.0;
 

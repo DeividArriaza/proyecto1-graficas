@@ -6,8 +6,8 @@ mod fps;
 mod framebuffer;
 mod game;
 mod maze;
-mod monster;
 mod mazegen;
+mod monster;
 mod player;
 mod render;
 mod sprites;
@@ -60,7 +60,7 @@ fn main() {
     // préstamo de los datos que esa pantalla está mostrando.
     let mut report: Option<LevelReport> = None;
 
-    let mut window = Window::new("Maze Runner", width, height, WindowOptions::default()).unwrap();
+    let mut window = Window::new("Lethal Maze", width, height, WindowOptions::default()).unwrap();
 
     // El cursor se esconde dentro del nivel y reaparece en el menú. Se lleva la
     // cuenta para llamar a `set_cursor_visibility` sólo cuando cambia: es una
@@ -290,10 +290,13 @@ fn play(
 
     state.flashlight.update(delta);
 
-    // La animación avanza con el tiempo, no con los cuadros: el monstruo respira
-    // al mismo ritmo a 15 o a 60 fps.
+    // La ronda y la animación avanzan con el tiempo, no con los cuadros: el
+    // monstruo camina y respira al mismo ritmo a 15 o a 60 fps.
+    //
+    // Los dos campos se toman prestados a la vez porque son distintos: `monster`
+    // mutable y `maze` compartido. El compilador lo permite justamente por eso.
     if let (Some(monster), Some(sheet)) = (state.monster.as_mut(), sprites) {
-        monster.update(delta, sheet.frames());
+        monster.update(&state.maze, delta, sheet.frames());
     }
 
     // La celda propia se recuerda siempre; el resto sólo si hay luz que lo

@@ -2,7 +2,7 @@ use minifb::{Key, MouseMode, Window};
 use nalgebra_glm::Vec2;
 use std::f32::consts::TAU;
 
-use crate::maze::{Maze, BLOCK_SIZE};
+use crate::maze::{cell_at, Maze};
 
 // ---------------------------------------------------------------------------
 // Velocidades del jugador, en unidades **por segundo**.
@@ -87,17 +87,28 @@ impl MouseLook {
     /// Devuelve 0.0 en el primer cuadro: hace falta una posición anterior para
     /// poder restar, y sin ella el giro saldría de la nada.
     pub fn delta_angle(&mut self, window: &mut Window) -> f32 {
-        // Con la ventana sin foco el cursor está en otra aplicación. Se olvida
-        // la referencia para que al volver no se acumule el trayecto de afuera.
-        if !window.is_active() {
-            self.last_x = None;
-            return 0.0;
-        }
-
+        // Sin foco el cursor está en otra aplicación, y su posición no debe
+        // contarse. `None` también sirve para olvidar la referencia, así que al
+        // volver no se acumula el trayecto que hizo afuera.
+        //
         // `Pass` entrega la posición incluso fuera de la ventana, que es lo que
-        // se quiere: girar no debería cortarse porque el cursor se pasó del
-        // borde de la ventana por unos píxeles.
-        let Some((x, _)) = window.get_mouse_pos(MouseMode::Pass) else {
+        // se quiere: girar no debería cortarse porque el cursor se pasó del borde
+        // por unos píxeles.
+        let position = if window.is_active() {
+            window.get_mouse_pos(MouseMode::Pass).map(|(x, _)| x)
+        } else {
+            None
+        };
+
+        self.advance(position)
+    }
+
+    /// El cálculo, separado de la ventana para poder verificarlo.
+    ///
+    /// `None` significa "no hay lectura válida": sin foco, o sin posición. En ese
+    /// caso se olvida la referencia y no hay giro.
+    fn advance(&mut self, position: Option<f32>) -> f32 {
+        let Some(x) = position else {
             self.last_x = None;
             return 0.0;
         };
@@ -110,6 +121,9 @@ impl MouseLook {
 
         let movement = x - previous;
 
+        // Un salto enorme es un artefacto, no un gesto. Se descarta el giro pero
+        // la referencia ya quedó actualizada, así que el movimiento siguiente se
+        // mide contra la posición nueva y no vuelve a saltar.
         if movement.abs() > MAX_MOUSE_JUMP {
             return 0.0;
         }
@@ -140,19 +154,9 @@ pub struct Player {
 /// (por eso se ve como un muro al frente), pero el jugador tiene que poder
 /// entrar en ella para que se dispare la condición de victoria.
 fn is_wall(maze: &Maze, x: f32, y: f32) -> bool {
-    // fuera del laberinto por el lado negativo: se trata como pared.
-    if x < 0.0 || y < 0.0 {
-        return true;
-    }
+    let cell = cell_at(maze, x, y);
 
-    let i = x as usize / BLOCK_SIZE;
-    let j = y as usize / BLOCK_SIZE;
-
-    match maze.get(j).and_then(|row| row.get(i)) {
-        Some(&cell) => cell != ' ' && cell != 'g' && cell != 'G',
-        // fuera del laberinto por el lado positivo: también es pared.
-        None => true,
-    }
+    cell != ' ' && cell != 'g' && cell != 'G'
 }
 
 /// Aplica el desplazamiento (dx, dy) partiéndolo en tramos cortos.
@@ -396,6 +400,127 @@ mod tests {
             player.pos.y >= 100.0 + COLLISION_MARGIN - 5.0,
             "se pegó demasiado a la pared: y={}",
             player.pos.y
+        );
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+
+    #[test]
+    fn el_primer_cuadro_no_gira() {
+        let mut mouse = MouseLook::new();
+
+        // sin posición anterior no hay nada que restar
+        assert_eq!(mouse.advance(Some(640.0)), 0.0);
+    }
+
+    #[test]
+    fn el_desplazamiento_se_traduce_en_giro() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(600.0));
+
+        let turn = mouse.advance(Some(700.0));
+
+        assert!(
+            (turn - 100.0 * MOUSE_SENSITIVITY).abs() < 1e-6,
+            "100 px deberían girar {} rad, dio {turn}",
+            100.0 * MOUSE_SENSITIVITY
+        );
+    }
+
+    #[test]
+    fn el_giro_sigue_la_direccion_del_mouse() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(600.0));
+        assert!(mouse.advance(Some(650.0)) > 0.0, "a la derecha, giro positivo");
+
+        mouse.advance(Some(650.0));
+        assert!(mouse.advance(Some(600.0)) < 0.0, "a la izquierda, giro negativo");
+    }
+
+    #[test]
+    fn quedarse_quieto_no_gira() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(500.0));
+
+        for _ in 0..10 {
+            assert_eq!(mouse.advance(Some(500.0)), 0.0);
+        }
+    }
+
+    /// Un salto grande —recuperar el foco, volver de otro escritorio— no debe
+    /// traducirse en varias vueltas de golpe.
+    #[test]
+    fn un_salto_enorme_se_descarta() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(100.0));
+
+        assert_eq!(
+            mouse.advance(Some(100.0 + MAX_MOUSE_JUMP + 1.0)),
+            0.0,
+            "el salto debe ignorarse"
+        );
+
+        // pero la referencia quedó actualizada: el movimiento siguiente se mide
+        // contra la posición nueva, no contra la vieja.
+        let turn = mouse.advance(Some(100.0 + MAX_MOUSE_JUMP + 11.0));
+
+        assert!(
+            (turn - 10.0 * MOUSE_SENSITIVITY).abs() < 1e-6,
+            "tras el salto, 10 px deberían girar normal; dio {turn}"
+        );
+    }
+
+    /// Perder el foco tiene que borrar la referencia. Si no, el trayecto que el
+    /// cursor hizo en otra aplicación se aplicaría entero al volver.
+    #[test]
+    fn perder_el_foco_olvida_la_referencia() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(100.0));
+        assert_eq!(mouse.advance(None), 0.0, "sin lectura no hay giro");
+
+        // al volver, el primer cuadro es de referencia otra vez
+        assert_eq!(mouse.advance(Some(900.0)), 0.0, "no debe girar de golpe");
+
+        // y a partir de ahí funciona normal
+        assert!(mouse.advance(Some(910.0)) > 0.0);
+    }
+
+    #[test]
+    fn reiniciar_tambien_olvida_la_referencia() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(100.0));
+        mouse.reset();
+
+        assert_eq!(mouse.advance(Some(800.0)), 0.0, "tras reset no debe girar");
+    }
+
+    /// Cruzar la ventana de lado a lado debería dar una vuelta parcial pero
+    /// amplia. Si este número se va muy lejos, la sensibilidad quedó mal.
+    #[test]
+    fn cruzar_la_pantalla_gira_una_vuelta_parcial() {
+        let mut mouse = MouseLook::new();
+
+        mouse.advance(Some(0.0));
+
+        let mut total = 0.0;
+        for x in 1..1300 {
+            total += mouse.advance(Some(x as f32));
+        }
+
+        let degrees = total.to_degrees();
+
+        assert!(
+            (240.0..360.0).contains(&degrees),
+            "cruzar 1300 px giró {degrees:.0} grados; se esperaba entre 240 y 360"
         );
     }
 }

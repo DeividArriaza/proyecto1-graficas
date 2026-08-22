@@ -1,82 +1,137 @@
-# 09 — Raycasting: Movimiento del Jugador
+# Lethal Maze
 
-Tercera etapa de la fase de **Raycasting** del curso **cc2018 – Gráficas por Computadora** (UVG). En la etapa anterior el jugador aparecía en el laberinto con un rayo estático; ahora se agrega el **control del jugador**: el teclado modifica en cada cuadro su posición y su ángulo de vista. Sobre esa base se lanza un **abanico de rayos** que cubre el campo de visión, y se detecta la llegada a la meta. Con el campo de visión ya resuelto, lo que falta para la vista en primera persona es proyectar cada rayo como una columna en pantalla.
+Raycaster en Rust: un laberinto en primera persona, a oscuras, con una linterna
+que se gasta y algo caminando por los pasillos.
 
-## Objetivo
+Proyecto 1 del curso **cc2018 – Gráficas por Computadora** (UVG).
 
-- Leer el teclado dentro del ciclo de render y actualizar el estado del jugador cuadro a cuadro.
-- Avanzar y retroceder al jugador en la dirección de su ángulo de vista, y girar ese ángulo.
-- Lanzar un abanico de rayos repartido de forma pareja sobre el campo de visión.
-- Detectar que el jugador llegó a la meta y terminar el juego.
+## Cómo correr
+
+```bash
+cargo run --release
+```
+
+Se abre una ventana de 1300 x 900. El juego arranca en el menú.
+
+No hace falta ningún archivo externo para jugar: si falta una textura se genera
+en código, y si falta un archivo de audio se omite en silencio.
 
 ## Controles
 
 | Tecla | Acción |
-| ----- | ------ |
-| `W` | Avanzar en la dirección de vista |
-| `S` | Retroceder |
-| `A` | Girar a la izquierda |
-| `D` | Girar a la derecha |
-| `Escape` | Salir |
+| --- | --- |
+| `W` `A` `S` `D` | Moverse |
+| Mouse | Girar (horizontal) |
+| `A` / `D` | Girar con el teclado |
+| `Shift` o `Ctrl` | Correr |
+| `M` | Prender y apagar la linterna |
+| `Esc` | Pausa dentro del nivel; salir desde el menú |
+| `Enter` | Confirmar |
 
-El movimiento se calcula con el ángulo de vista, de modo que avanzar siempre ocurre hacia donde el jugador está viendo:
+En la pausa: `W`/`S` para elegir, flechas laterales para el volumen de la música.
 
-```
-pos.x += MOVE_SPEED * cos(a)
-pos.y += MOVE_SPEED * sin(a)
-```
+## Qué tiene
 
-En esta etapa no hay detección de colisiones: el jugador atraviesa las paredes.
+**Motor**
 
-## El campo de visión
+- Raycasting con **DDA**, un rayo por columna de pantalla. Devuelve distancia,
+  cara impactada y coordenada de textura.
+- Corrección de ojo de pez, y reparto de rayos por posiciones parejas sobre el
+  plano de proyección en vez de por ángulos parejos.
+- Paredes texturizadas, con las caras norte y sur más oscuras que las este y
+  oeste para que las esquinas se lean.
+- Piso y techo con degradado por distancia real, no color plano.
+- Búfer de profundidad por columna, que es lo que permite ocluir sprites.
+- Sprites tipo *billboard* con transparencia y animación por cuadros.
 
-Hasta ahora se lanzaba un solo rayo, en la dirección exacta de la vista. El **campo de visión** (`FOV`, *field of view*) es el ángulo total que abarca lo que el jugador alcanza a ver, y se cubre repartiendo `NUM_RAYS` rayos de forma pareja dentro de ese ángulo:
+**Juego**
 
-```
-fracción = i / (NUM_RAYS - 1)        // de 0.0 a 1.0
-ángulo   = a - FOV/2 + FOV * fracción
-```
-
-El primer rayo apunta a `a - FOV/2`, el último a `a + FOV/2` y el de en medio coincide con la dirección de vista. Con `NUM_RAYS = 5` el abanico se ve como cinco líneas separadas; en la vista en primera persona se lanzará un rayo por cada columna de píxeles de la pantalla, y la distancia recorrida por cada uno definirá la altura de la pared en esa columna.
-
-## La meta
-
-En cada cuadro la posición del jugador en píxeles se traduce a la celda que ocupa. Si esa celda es la marca `g`, el juego termina.
+- Tres niveles fijos y un **modo infinito** que genera un laberinto nuevo cada
+  partida.
+- Generación por recorrido en profundidad, con la meta colocada en la celda más
+  lejana medida por recorrido en anchura. La conectividad está garantizada por
+  construcción.
+- **Linterna con batería**: se gasta encendida, se repone apagada, parpadea
+  cuando queda poca. Sin ella se ve el pasillo inmediato y nada más.
+- **Niebla de guerra** en el minimapa: sólo se revela lo que la linterna alcanzó,
+  y el rastro propio se recuerda siempre.
+- Un monstruo que patrulla los pasillos. Atraparte termina el nivel.
+- Pantallas de bienvenida, pausa y desenlace, con informe de tiempo, exploración
+  y batería restante.
+- Música, ambiente y efectos, con la cadencia de los pasos atada al
+  desplazamiento real.
 
 ## Estructura
 
 ```
-.
-├── Cargo.toml          # Manifiesto del proyecto (minifb, nalgebra-glm)
-├── Cargo.lock          # Versiones exactas de las dependencias
-├── maze.txt            # Definición del laberinto en texto
-└── src
-    ├── main.rs         # Punto de entrada; ciclo de render, entrada y dibujo del mundo
-    ├── framebuffer.rs  # Buffer de píxeles en memoria
-    ├── maze.rs         # Carga del laberinto y estado inicial del jugador
-    ├── player.rs       # Estado del jugador y lectura del teclado
-    └── caster.rs       # Lanzamiento de un rayo en un ángulo dado
+src/
+├── main.rs          Ciclo de juego: fase de actualización y fase de dibujo
+├── caster.rs        Lanzamiento de rayos (DDA). Geometría pura
+├── maze.rs          Tipo del laberinto, carga y consulta de celdas
+├── mazegen.rs       Generación por DFS + colocación de la meta por BFS
+├── player.rs        Estado, colisiones y entrada del jugador
+├── monster.rs       Posición, patrulla y animación del monstruo
+├── flashlight.rs    Batería de la linterna
+├── discovery.rs     Qué celdas se han visto (niebla de guerra)
+├── framebuffer.rs   Búfer de píxeles
+├── textures.rs      Texturas de pared, con respaldo procedural
+├── sprites.rs       Hojas de sprites
+├── audio.rs         Música y efectos
+├── fps.rs           Medición de cuadros por segundo
+├── game/            Estados y pantallas
+│   ├── mod.rs       Pantalla activa, niveles, sesión, informe
+│   ├── welcome.rs   Menú principal
+│   ├── pause.rs     Menú de pausa
+│   └── outcome.rs   Informe de éxito o derrota
+└── render/          Dibujo. Nada de acá conoce la entrada del usuario
+    ├── mod.rs       FOV y altura del ojo
+    ├── world.rs     Vista en primera persona
+    ├── billboard.rs Proyección de sprites
+    ├── minimap.rs   Minimapa de la esquina
+    ├── lighting.rs  Modelo de luz: ambiental y haz de la linterna
+    ├── text.rs      Fuente de mapa de bits 5x7
+    └── hud.rs       Contador de FPS y estado de la linterna
 ```
 
-## Cómo correr
+`main.rs` no dibuja y `render/` no lee el teclado.
 
-1. Clonar el repositorio y cambiar a esta rama:
-    ```bash
-    git clone https://github.com/menene/cc2018-2026-02-10.git
-    cd cc2018-2026-02-10
-    git checkout 09-RC-03-MAZE-MOVEMENT
-    ```
+## Assets
 
-2. Compilar y ejecutar:
-    ```bash
-    cargo run
-    ```
+Todo lo de `assets/` es reemplazable sin tocar código. Cada carpeta tiene su
+propio `README.md` con los nombres y formatos esperados.
 
-3. Se abre una ventana con el laberinto y el jugador. Mover con `W`/`A`/`S`/`D` y observar cómo el abanico de rayos gira y se recorta contra las paredes. Al llegar a la celda marcada con `g` el programa avisa en la terminal y termina. Cerrar con `Escape` o con el botón de cerrar de la ventana.
+```
+assets/
+├── levels/    Los tres niveles fijos. Si falta uno, se genera
+├── audio/     Música, ambiente y efectos
+└── sprites/   Hojas de sprites
+```
 
-## Recursos
+Sprites: derivados de trabajos de **surt** y **NMN**, tomados de
+[FPS Monster Enemies](https://opengameart.org/content/fps-monster-enemies) (CC0).
 
-- [Rust Programming Language](https://www.rust-lang.org/)
-- [minifb](https://docs.rs/minifb/)
-- [Raycasting](https://en.wikipedia.org/wiki/Ray_casting)
-- [Lode's Computer Graphics Tutorial — Raycasting](https://lodev.org/cgtutor/raycasting.html)
+## Pruebas
+
+```bash
+cargo test
+```
+
+72 pruebas. Cubren las colisiones, el caster contra geometría conocida, el modelo
+de luz, la batería, los límites del framebuffer, el muestreo de texturas y
+sprites, la cobertura de la fuente, la generación de laberintos y la patrulla del
+monstruo.
+
+La más completa dibuja el juego entero en memoria —los cuatro niveles, en dos
+resoluciones, con todas las capas— y verifica que nada se rompa.
+
+Hay tres pruebas de diagnóstico marcadas `ignore`:
+
+```bash
+cargo test -- --ignored --nocapture muestra_un_laberinto      # imprime un laberinto
+cargo test -- --ignored --nocapture duraciones                # mide los audios
+cargo test -- --ignored --nocapture distancia_a_la_meta       # ubica al monstruo
+```
+
+## Video
+
+En `video/`. Ver el `README.md` de esa carpeta.

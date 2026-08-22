@@ -297,6 +297,12 @@ mod tests {
                         "una columna quedó con distancia inválida"
                     );
 
+                    if let (Some(monster), Some(sheet)) =
+                        (session.monster.as_mut(), sheet.as_ref())
+                    {
+                        monster.update(&session.maze, 0.2, sheet.frames());
+                    }
+
                     if let (Some(monster), Some(sheet)) = (session.monster.as_ref(), sheet.as_ref())
                     {
                         render::billboard::draw(

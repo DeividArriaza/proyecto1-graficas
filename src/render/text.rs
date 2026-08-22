@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn la_fuente_cubre_los_textos_del_juego() {
         let usados = concat!(
-            "MAZE RUNNER",
+            "LETHAL MAZE",
             "INSTALACION ABANDONADA - ENCUENTRA LA SALIDA",
             "NIVEL 1 - ALMACEN NIVEL 2 - PASILLOS NIVEL 3 - SUBSUELO",
             "MODO INFINITO SALIR",

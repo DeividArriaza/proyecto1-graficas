@@ -103,7 +103,7 @@ pub fn draw(framebuffer: &mut Framebuffer, menu: &Menu) {
     let width = framebuffer.width;
     let height = framebuffer.height;
 
-    text::draw_text_centered(framebuffer, height / 8, TITLE_SCALE, TITLE_COLOR, "MAZE RUNNER");
+    text::draw_text_centered(framebuffer, height / 8, TITLE_SCALE, TITLE_COLOR, "LETHAL MAZE");
     text::draw_text_centered(
         framebuffer,
         height / 8 + text::text_height(TITLE_SCALE) + 24,

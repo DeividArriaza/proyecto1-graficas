@@ -4,14 +4,23 @@
 //! el mundo y el avance de su ciclo de animación; `render::billboard` se encarga
 //! de proyectarlo.
 //!
-//! Está quieto a propósito. La rúbrica pide una animación, no un enemigo, y
-//! perseguir al jugador sería otro juego: haría falta búsqueda de caminos,
-//! condición de muerte y reinicio. Quieto y a oscuras ya cumple su función:
-//! aparece cuando lo alumbrás.
+//! # Cómo se mueve
+//!
+//! Patrulla, no persigue. Camina en línea recta hasta topar con una pared y ahí
+//! elige otra dirección, evitando volver por donde vino salvo en un callejón sin
+//! salida. Eso es todo: no hay búsqueda de caminos ni conocimiento de dónde está
+//! el jugador.
+//!
+//! Es deliberado, y no sólo por simplicidad. Un monstruo que te persigue exige
+//! un juego distinto —hay que poder escapar, esconderse, morir de forma
+//! entendible—. Uno que ronda a ciegas por los pasillos da la misma tensión con
+//! una fracción de las reglas: el peligro está en no saber dónde está, y eso ya
+//! lo resuelve la oscuridad.
 
 use nalgebra_glm::Vec2;
 
-use crate::maze::{Maze, BLOCK_SIZE};
+use crate::maze::{cell_at, Maze, BLOCK_SIZE};
+use crate::mazegen::Rng;
 
 /// Cuánto dura cada cuadro de la animación, en segundos.
 ///
@@ -39,12 +48,36 @@ const MIN_GOAL_DISTANCE: f32 = 4.0 * BLOCK_SIZE as f32;
 /// que te atrapa coincida con verlo encima y no con haberlo atravesado.
 const CATCH_DISTANCE: f32 = 38.0;
 
+/// A qué velocidad patrulla, en píxeles por segundo.
+///
+/// El jugador camina a 300 px/s, así que 45 es siete veces más lento: se mueve lo
+/// suficiente para que el laberinto no se sienta un museo, pero nunca te alcanza
+/// si estás huyendo. La amenaza es cruzártelo, no que te corra.
+const PATROL_SPEED: f32 = 45.0;
+
+/// Cuánto espacio deja respecto a las paredes, en píxeles.
+///
+/// Sin margen el sprite se mete en la pared y se ve la mitad recortada al pasar
+/// por un pasillo angosto.
+const WALL_MARGIN: f32 = 26.0;
+
+/// Las cuatro direcciones en las que puede caminar.
+const DIRECTIONS: [(f32, f32); 4] = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+
 pub struct Monster {
     pub pos: Vec2,
+    /// Hacia dónde camina. Siempre es una de las cuatro cardinales.
+    direction: Vec2,
     /// Cuadro actual de la animación.
     frame: usize,
     /// Tiempo acumulado en el cuadro actual.
     timer: f32,
+    /// Generador propio, sembrado con su posición inicial.
+    ///
+    /// Que sea determinista importa: el mismo nivel produce la misma ronda, así
+    /// que reintentar un nivel fijo no cambia el recorrido del monstruo y las
+    /// pruebas pueden verificarlo.
+    rng: Rng,
 }
 
 impl Monster {
@@ -66,21 +99,93 @@ impl Monster {
         let pos = pick_cell(maze, player, goal, MIN_GOAL_DISTANCE)
             .or_else(|| pick_cell(maze, player, goal, 0.0))?;
 
-        Some(Monster {
+        // la semilla sale de la posición: distinta por nivel, igual entre
+        // partidas del mismo nivel.
+        let seed = (pos.x as u64).wrapping_mul(73_856_093) ^ (pos.y as u64).wrapping_mul(19_349_663);
+
+        let mut monster = Monster {
             pos,
+            direction: Vec2::new(1.0, 0.0),
             frame: 0,
             timer: 0.0,
-        })
+            rng: Rng::new(seed),
+        };
+
+        // arranca mirando a un pasillo libre, no contra una pared.
+        monster.turn(maze);
+
+        Some(monster)
+    }
+
+    /// Camina y avanza la animación.
+    pub fn update(&mut self, maze: &Maze, delta: f32, frames: usize) {
+        self.walk(maze, delta);
+        self.animate(delta, frames);
+    }
+
+    /// Avanza en línea recta y, al topar con algo, elige otra dirección.
+    ///
+    /// El paso se comprueba contra el punto de destino corrido `WALL_MARGIN` en
+    /// la dirección del movimiento, igual que el del jugador: así se detiene
+    /// antes de tocar la pared en vez de quedar incrustado en ella.
+    fn walk(&mut self, maze: &Maze, delta: f32) {
+        let step = PATROL_SPEED * delta;
+        let target = self.pos + self.direction * step;
+        let probe = target + self.direction * WALL_MARGIN;
+
+        if is_blocked(maze, probe) {
+            self.turn(maze);
+            return;
+        }
+
+        self.pos = target;
+    }
+
+    /// Elige una dirección libre, evitando deshacer el camino.
+    ///
+    /// Volver por donde vino queda como último recurso: sin esa preferencia, en
+    /// un pasillo el monstruo se quedaría vibrando entre dos celdas. En un
+    /// callejón sin salida el reverso es la única salida, y entonces sí se toma.
+    fn turn(&mut self, maze: &Maze) {
+        let reverse = -self.direction;
+
+        let mut options = [Vec2::new(0.0, 0.0); 4];
+        let mut count = 0;
+        let mut reverse_is_free = false;
+
+        for (dx, dy) in DIRECTIONS {
+            let candidate = Vec2::new(dx, dy);
+            let probe = self.pos + candidate * (WALL_MARGIN + PATROL_SPEED);
+
+            if is_blocked(maze, probe) {
+                continue;
+            }
+
+            // el reverso se guarda aparte, para usarlo sólo si no hay otra
+            if (candidate - reverse).norm() < 0.01 {
+                reverse_is_free = true;
+                continue;
+            }
+
+            options[count] = candidate;
+            count += 1;
+        }
+
+        if count > 0 {
+            self.direction = options[self.rng.below(count)];
+        } else if reverse_is_free {
+            self.direction = reverse;
+        }
+        // si nada está libre, se queda quieto y lo reintenta el cuadro siguiente
     }
 
     /// Avanza la animación. `frames` es cuántos cuadros tiene el ciclo.
-    ///
     ///
     /// El temporizador se descuenta en un `while` y no en un `if`: con un cuadro
     /// muy largo —o un ciclo muy rápido— podría haber que saltar más de un cuadro
     /// de golpe, y un `if` dejaría la animación arrastrándose detrás del tiempo
     /// real.
-    pub fn update(&mut self, delta: f32, frames: usize) {
+    fn animate(&mut self, delta: f32, frames: usize) {
         if frames == 0 {
             return;
         }
@@ -107,6 +212,15 @@ impl Monster {
 
         offset.x * offset.x + offset.y * offset.y <= CATCH_DISTANCE * CATCH_DISTANCE
     }
+}
+
+/// ¿El monstruo puede pararse en este punto?
+///
+/// Todo lo que no sea piso lo bloquea, **incluida la meta**. Que la salida sea
+/// infranqueable para él es lo que garantiza que nunca se pare encima y la
+/// vuelva intomable.
+fn is_blocked(maze: &Maze, point: Vec2) -> bool {
+    cell_at(maze, point.x, point.y) != ' '
 }
 
 /// Centro en píxeles de la celda (col, row).
@@ -166,6 +280,18 @@ fn pick_cell(maze: &Maze, player: Vec2, goal: Option<Vec2>, min_goal: f32) -> Op
     best.map(|(_, pos)| pos)
 }
 
+/// Constructor mínimo para pruebas.
+#[cfg(test)]
+fn test_monster(x: f32, y: f32) -> Monster {
+    Monster {
+        pos: Vec2::new(x, y),
+        direction: Vec2::new(1.0, 0.0),
+        frame: 0,
+        timer: 0.0,
+        rng: Rng::new(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,27 +332,23 @@ mod tests {
     /// La animación tiene que dar la vuelta y no salirse del rango de cuadros.
     #[test]
     fn la_animacion_cicla() {
-        let mut monster = Monster {
-            pos: Vec2::new(0.0, 0.0),
-            frame: 0,
-            timer: 0.0,
-        };
+        let mut monster = test_monster(0.0, 0.0);
 
         // avanzar justo un cuadro
-        monster.update(FRAME_SECONDS, 4);
+        monster.animate(FRAME_SECONDS, 4);
         assert_eq!(monster.frame(), 1);
 
         // un salto grande no debe dejar la animación atrasada: se consumen todos
         // los cuadros que quepan en ese tiempo.
-        monster.update(FRAME_SECONDS * 2.0, 4);
+        monster.animate(FRAME_SECONDS * 2.0, 4);
         assert_eq!(monster.frame(), 3);
 
         // y da la vuelta en vez de desbordar
-        monster.update(FRAME_SECONDS, 4);
+        monster.animate(FRAME_SECONDS, 4);
         assert_eq!(monster.frame(), 0);
 
         // con cero cuadros no debe entrar en pánico ni dividir por cero
-        monster.update(FRAME_SECONDS, 0);
+        monster.animate(FRAME_SECONDS, 0);
         assert_eq!(monster.frame(), 0);
     }
 }
@@ -236,11 +358,7 @@ mod catch_tests {
     use super::*;
 
     fn monster_at(x: f32, y: f32) -> Monster {
-        Monster {
-            pos: Vec2::new(x, y),
-            frame: 0,
-            timer: 0.0,
-        }
+        test_monster(x, y)
     }
 
     #[test]
@@ -315,6 +433,77 @@ mod catch_tests {
                 _ => println!("{}: falta monstruo o meta", level.name),
             }
         }
+    }
+
+    /// Después de patrullar mucho tiempo, el monstruo nunca puede haber quedado
+    /// dentro de una pared ni encima de la meta.
+    ///
+    /// Es la prueba que importa del movimiento: no interesa por dónde anduvo,
+    /// interesa que en ningún momento haya atravesado algo. Se simulan 40
+    /// segundos de ronda sobre 30 laberintos distintos.
+    #[test]
+    fn la_ronda_nunca_atraviesa_paredes() {
+        use crate::maze::{cell_at, extract_player};
+        use crate::mazegen;
+
+        for seed in 1..30u64 {
+            let mut maze = mazegen::generate(10, 8, seed);
+            let player = extract_player(&mut maze);
+
+            let Some(mut monster) = Monster::spawn(&maze, player.pos) else {
+                continue;
+            };
+
+            // 40 s a pasos de 1/60 s
+            for tick in 0..2400 {
+                monster.update(&maze, 1.0 / 60.0, 4);
+
+                let cell = cell_at(&maze, monster.pos.x, monster.pos.y);
+
+                assert_eq!(
+                    cell, ' ',
+                    "semilla {seed}, paso {tick}: el monstruo quedó en '{cell}' \
+                     en ({:.0}, {:.0})",
+                    monster.pos.x, monster.pos.y
+                );
+            }
+        }
+    }
+
+    /// Y tiene que moverse de verdad: un monstruo que se queda vibrando en el
+    /// lugar cumpliría la prueba anterior sin patrullar nada.
+    #[test]
+    fn la_ronda_recorre_distancia() {
+        use crate::maze::extract_player;
+        use crate::mazegen;
+
+        let mut quietos = 0;
+
+        for seed in 1..30u64 {
+            let mut maze = mazegen::generate(10, 8, seed);
+            let player = extract_player(&mut maze);
+
+            let Some(mut monster) = Monster::spawn(&maze, player.pos) else {
+                continue;
+            };
+
+            let start = monster.pos;
+
+            for _ in 0..1200 {
+                monster.update(&maze, 1.0 / 60.0, 4);
+            }
+
+            // en 20 s a 45 px/s podría recorrer 900 px; con los rebotes de un
+            // laberinto, exigir un bloque de desplazamiento neto es prudente.
+            if (monster.pos - start).norm() < BLOCK_SIZE as f32 {
+                quietos += 1;
+            }
+        }
+
+        assert!(
+            quietos <= 3,
+            "{quietos} monstruos de 29 se quedaron casi en el lugar"
+        );
     }
 
     /// El monstruo no puede quedar pegado a la meta: bloquearía la salida y
